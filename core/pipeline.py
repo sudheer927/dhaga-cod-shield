@@ -505,10 +505,18 @@ def process_dhaga_order(
         prevented_loss = LOGISTICS_COST_PER_RTO_INR
 
     elif not deterministic_checks.pincode_zone_verified:
-        decision = "REJECT_UNSERVICEABLE_ADDRESS"
-        decision_summary = "HALTED: Pincode geographic circle does not match customer's declared state."
+        decision = "HOLD_WHATSAPP_CONFIRMATION"
+        decision_summary = "HOLD: Geographic discrepancy. Pincode circle does not match declared city/state. WhatsApp self-resolution queued (12h auto-cancel timeout)."
         fails_visibly = True
-        failure_banner = "CRITICAL FAILURE: Geographic Postal Mismatch. Pincode and state conflict."
+        failure_banner = "DISCREPANCY ALERT: Pincode and state conflict. Customer given 12h to correct via WhatsApp."
+        whatsapp_intervention, judgment_model_name = step_3_optimize_whatsapp_intervention(
+            parsed=parsed_address,
+            deterministic=deterministic_checks,
+            risk=rto_assessment,
+            order_id=order_id,
+            api_key=clean_key,
+            provider=provider
+        )
         prevented_loss = LOGISTICS_COST_PER_RTO_INR
 
     elif rto_assessment.risk_tier == "HIGH":

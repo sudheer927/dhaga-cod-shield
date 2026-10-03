@@ -615,20 +615,46 @@ with tab_workstation:
                     """, unsafe_allow_html=True)
 
                     st.markdown("###### ⚡ Interactive Customer Reply Simulation")
-                    st.caption("Simulate customer tapping an interactive WhatsApp button:")
-                    
+                    st.caption("Simulate customer tapping their WhatsApp reply button:")
+
+                    has_door = bool(lbl.get("premise")) if lbl else True
+                    has_landmark = bool(lbl.get("landmark")) if lbl else True
+                    circle_matched = bool(lbl.get("circle_matched", 1)) if lbl else True
+
                     sim_c1, sim_c2 = st.columns(2)
                     with sim_c1:
-                        if st.button("💬 'Add House #14 & Confirm'", key=f"sim_conf_{active_id}", use_container_width=True):
-                            simulate_customer_whatsapp_reply(active_id, "CONFIRM", "Customer replied: 'House #14, near Shiv Mandir'")
-                            st.success("Customer Confirmed! Order Auto-Cleared for Label Print.")
+                        if not circle_matched:
+                            btn_text = "📍 'Correct PIN to Match City'"
+                            action = "CORRECT_PIN"
+                            succ_msg = "Pincode Corrected & Circle Verified! Order Cleared for Label Print."
+                        elif not has_landmark:
+                            btn_text = "🏛️ 'Add Landmark: Near Shiv Mandir'"
+                            action = "CONFIRM_LANDMARK"
+                            succ_msg = "Landmark Added! Order Cleared for Label Print."
+                        elif not has_door:
+                            btn_text = "🏠 'Add House/Door Number: #14'"
+                            action = "CONFIRM_HOUSE"
+                            succ_msg = "House Number Added! Order Cleared for Label Print."
+                        else:
+                            btn_text = "✓ 'Confirm Current Address'"
+                            action = "CONFIRM"
+                            succ_msg = "Address Verified! Order Cleared for Label Print."
+
+                        if st.button(btn_text, key=f"sim_action_{active_id}", use_container_width=True):
+                            simulate_customer_whatsapp_reply(active_id, action)
+                            st.success(succ_msg)
                             st.rerun()
 
                     with sim_c2:
-                        if st.button("📍 'Share Live GPS Location'", key=f"sim_gps_{active_id}", use_container_width=True):
+                        if st.button("🗺️ 'Share Live GPS Location'", key=f"sim_gps_{active_id}", use_container_width=True):
                             simulate_customer_whatsapp_reply(active_id, "SHARE_GPS")
                             st.success("GPS Verified! Order Auto-Cleared for Label Print.")
                             st.rerun()
+
+                    if st.button("❌ Customer Taps 'Cancel My Order'", key=f"sim_canc_{active_id}", use_container_width=True):
+                        simulate_customer_whatsapp_reply(active_id, "CANCEL")
+                        st.warning("Customer Cancelled via WhatsApp. Restocked inventory & saved ₹120 freight!")
+                        st.rerun()
 
                 elif st_code in ("DISPATCHED", "AUTO_APPROVED"):
                     st.markdown("""
@@ -773,6 +799,6 @@ with tab_gateway:
         st.markdown("---")
         st.markdown("##### 🔄 Database Maintenance")
         if st.button("Reset Seed Queue to Defaults", use_container_width=True):
-            seed_default_orders()
+            seed_default_orders(force_reset=True)
             st.success("Refreshed factory order queue!")
             st.rerun()

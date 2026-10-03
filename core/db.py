@@ -95,11 +95,18 @@ def init_db() -> None:
     conn.close()
 
 
-def seed_default_orders() -> None:
-    """Pre-seed database with real Tier-2/3 Indian e-commerce orders if empty."""
+def seed_default_orders(force_reset: bool = False) -> None:
+    """Pre-seed database with real Tier-2/3 Indian e-commerce orders."""
     conn = get_db_connection()
     cursor = conn.cursor()
     
+    if force_reset:
+        cursor.execute("DELETE FROM audit_log")
+        cursor.execute("DELETE FROM whatsapp_logs")
+        cursor.execute("DELETE FROM shipping_labels")
+        cursor.execute("DELETE FROM orders")
+        conn.commit()
+
     cursor.execute("SELECT COUNT(*) as count FROM orders")
     count = cursor.fetchone()["count"]
     
@@ -425,45 +432,105 @@ def get_db_metrics() -> Dict[str, Any]:
 def simulate_customer_whatsapp_reply(order_id: str, action_type: str, extra_text: str = "") -> bool:
     """
     Simulates a live customer reply over WhatsApp:
-    - 'CONFIRM': Customer confirms location or adds door number -> auto-clears order to DISPATCHED
-    - 'SHARE_GPS': Customer drops a WhatsApp location pin -> adds GPS coords, auto-clears to DISPATCHED
+    - 'CONFIRM_HOUSE': Customer supplies missing house/door number
+    - 'CONFIRM_LANDMARK': Customer supplies missing prominent landmark
+    - 'CORRECT_PIN': Customer fixes pincode mismatch to match declared city/state
+    - 'SHARE_GPS': Customer drops a WhatsApp location pin
     - 'CANCEL': Customer cancels COD order -> updates to CANCELLED_RESTOCKED, saves ₹120 freight
     """
     conn = get_db_connection()
     cursor = conn.cursor()
     now_iso = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    if action_type == "CONFIRM":
+    # Fetch current order to get context
+    cursor.execute("SELECT * FROM orders WHERE order_id = ?", (order_id,))
+    ord_row = cursor.fetchone()
+    raw_addr = ord_row["raw_address"] if ord_row else ""
+
+    if action_type in ("CONFIRM_HOUSE", "CONFIRM"):
         new_status = "DISPATCHED"
-        note = extra_text or "Customer verified address via WhatsApp: 'House #14, near Shiv Mandir'."
+        house_str = extra_text or "House #14, Ward 8"
         cursor.execute("""
         UPDATE orders 
         SET status = ?, risk_score = 15, risk_tier = 'LOW', 
-            decision_summary = 'AUTO-CLEARED: Customer confirmed house number via WhatsApp.',
+            decision_summary = 'AUTO-CLEARED: Customer confirmed house/door number via WhatsApp.',
             updated_at = ?
         WHERE order_id = ?
         """, (new_status, now_iso, order_id))
 
-        # Update label
         cursor.execute("""
         UPDATE shipping_labels
-        SET premise = COALESCE(NULLIF(premise, ''), 'House #14'),
-            normalized_address = 'House #14, ' || normalized_address
+        SET premise = ?, normalized_address = ? || ', ' || normalized_address
         WHERE order_id = ?
-        """, (order_id,))
+        """, (house_str, house_str, order_id))
 
-        # Update WhatsApp
         cursor.execute("""
         UPDATE whatsapp_logs
         SET status = 'CUSTOMER_CONFIRMED', resolved_at = ?
         WHERE order_id = ?
         """, (now_iso, order_id))
 
-        # Audit
         cursor.execute("""
         INSERT INTO audit_log (order_id, action, actor, timestamp, notes)
-        VALUES (?, 'CUSTOMER_WHATSAPP_CONFIRMED', 'WHATSAPP_BOT', ?, ?)
-        """, (order_id, now_iso, note))
+        VALUES (?, 'CUSTOMER_WHATSAPP_ADDED_DOOR', 'WHATSAPP_BOT', ?, ?)
+        """, (order_id, now_iso, f"Customer confirmed premise: '{house_str}'. Order cleared for label print."))
+
+    elif action_type == "CONFIRM_LANDMARK":
+        new_status = "DISPATCHED"
+        lm_str = extra_text or "Near Shiv Mandir, Main Chowk"
+        cursor.execute("""
+        UPDATE orders 
+        SET status = ?, risk_score = 15, risk_tier = 'LOW', 
+            decision_summary = 'AUTO-CLEARED: Customer provided prominent landmark via WhatsApp.',
+            updated_at = ?
+        WHERE order_id = ?
+        """, (new_status, now_iso, order_id))
+
+        cursor.execute("""
+        UPDATE shipping_labels
+        SET landmark = ?, normalized_address = normalized_address || ' (Landmark: ' || ? || ')'
+        WHERE order_id = ?
+        """, (lm_str, lm_str, order_id))
+
+        cursor.execute("""
+        UPDATE whatsapp_logs
+        SET status = 'CUSTOMER_CONFIRMED', resolved_at = ?
+        WHERE order_id = ?
+        """, (now_iso, order_id))
+
+        cursor.execute("""
+        INSERT INTO audit_log (order_id, action, actor, timestamp, notes)
+        VALUES (?, 'CUSTOMER_WHATSAPP_ADDED_LANDMARK', 'WHATSAPP_BOT', ?, ?)
+        """, (order_id, now_iso, f"Customer confirmed landmark: '{lm_str}'. Order cleared for label print."))
+
+    elif action_type == "CORRECT_PIN":
+        new_status = "DISPATCHED"
+        # Determine appropriate pin for the location
+        new_pin = "302006" if "Jaipur" in raw_addr or "Rajasthan" in raw_addr else ("500082" if "Hyderabad" in raw_addr or "Telangana" in raw_addr else "560103")
+        cursor.execute("""
+        UPDATE orders 
+        SET status = ?, risk_score = 10, risk_tier = 'LOW', 
+            decision_summary = 'AUTO-CLEARED: Customer corrected postal PIN. Geographic circle verified.',
+            updated_at = ?
+        WHERE order_id = ?
+        """, (new_status, now_iso, order_id))
+
+        cursor.execute("""
+        UPDATE shipping_labels
+        SET pincode = ?, circle_matched = 1, pincode_valid = 1
+        WHERE order_id = ?
+        """, (new_pin, order_id))
+
+        cursor.execute("""
+        UPDATE whatsapp_logs
+        SET status = 'CUSTOMER_CONFIRMED', resolved_at = ?
+        WHERE order_id = ?
+        """, (now_iso, order_id))
+
+        cursor.execute("""
+        INSERT INTO audit_log (order_id, action, actor, timestamp, notes)
+        VALUES (?, 'CUSTOMER_WHATSAPP_CORRECTED_PIN', 'WHATSAPP_BOT', ?, ?)
+        """, (order_id, now_iso, f"Customer corrected PIN to {new_pin}. Circle conflict resolved. Ready for dispatch."))
 
     elif action_type == "SHARE_GPS":
         new_status = "DISPATCHED"
@@ -493,7 +560,7 @@ def simulate_customer_whatsapp_reply(order_id: str, action_type: str, extra_text
         cursor.execute("""
         UPDATE orders 
         SET status = ?, dead_freight_saved = 120.0,
-            decision_summary = 'CANCELLED: Customer cancelled order. Garment returned to inventory.',
+            decision_summary = 'CANCELLED: Customer cancelled order via WhatsApp. Garment returned to inventory.',
             updated_at = ?
         WHERE order_id = ?
         """, (new_status, now_iso, order_id))
@@ -512,4 +579,5 @@ def simulate_customer_whatsapp_reply(order_id: str, action_type: str, extra_text
     conn.commit()
     conn.close()
     return True
+
 
