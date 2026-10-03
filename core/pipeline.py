@@ -246,7 +246,11 @@ def mock_parse_address(raw_address: str, customer_name: Optional[str] = None) ->
     pincode = pin_match.group(1) if pin_match else None
     
     # Extract State if present
-    states = ["Karnataka", "Bihar", "Uttar Pradesh", "Rajasthan", "Maharashtra", "Jharkhand", "Delhi", "Gujarat"]
+    states = [
+        "Karnataka", "Bihar", "Uttar Pradesh", "Rajasthan", "Maharashtra", "Jharkhand", "Delhi", "Gujarat",
+        "Telangana", "Andhra Pradesh", "Tamil Nadu", "Kerala", "West Bengal", "Punjab", "Haryana",
+        "Madhya Pradesh", "Chhattisgarh", "Odisha", "Assam", "Goa", "Uttarakhand", "Himachal Pradesh"
+    ]
     detected_state = None
     for st in states:
         if re.search(rf"\b{st}\b", raw_address, re.IGNORECASE):
@@ -276,7 +280,10 @@ def mock_parse_address(raw_address: str, customer_name: Optional[str] = None) ->
         premise = pr_match.group(0).strip()
 
     # Basic city extraction
-    cities = ["Bengaluru", "Motihari", "Deoria", "Jaipur", "Gopalganj", "Bokaro", "Mumbai", "Delhi"]
+    cities = [
+        "Bengaluru", "Motihari", "Deoria", "Jaipur", "Gopalganj", "Bokaro", "Mumbai", "Delhi",
+        "Hyderabad", "Kolkata", "Chennai", "Pune", "Ahmedabad", "Lucknow", "Patna", "Chandigarh"
+    ]
     detected_city = None
     for ct in cities:
         if re.search(rf"\b{ct}\b", raw_address, re.IGNORECASE):

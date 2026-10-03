@@ -7,6 +7,19 @@ from typing import Dict, Any, List
 
 REAL_SHAPED_TEST_CASES: List[Dict[str, Any]] = [
     {
+        "id": "DHAGA-2575",
+        "category": "Customer Self-Cancellation (Saved Freight)",
+        "title": "Hyderabad Circle Mismatch (Customer Cancelled via WhatsApp)",
+        "order_value": 1000.0,
+        "customer_name": "Sudheer",
+        "phone": "9848012345",
+        "raw_address": "Plot 45, Near Hitech City Metro, Madhapur, Hyderabad, Telangana - 560001",
+        "expected_tier": "HIGH",
+        "initial_status": "CANCELLED_RESTOCKED",
+        "origin_fc": "Hyderabad FC",
+        "description": "Customer had postal circle mismatch, received WhatsApp confirmation prompt, and opted to cancel. Inventory restocked & ₹120 reverse freight saved."
+    },
+    {
         "id": "DHAGA-1001",
         "category": "Tier-1 Metro Clean",
         "title": "Clean Metro Apartment (Baseline Low Risk)",

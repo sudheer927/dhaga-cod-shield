@@ -120,7 +120,7 @@ def check_and_apply_migrations() -> None:
     row = cursor.fetchone()
     current_ver = row[0] if (row and row[0] is not None) else 0
 
-    TARGET_VERSION = 4  # v4: Full Hindi suffix landmark parsing + Anita Devi door missing alignment
+    TARGET_VERSION = 5  # v5: Permanent DHAGA-2575 Sudheer seed + non-destructive custom order persistence
     if current_ver < TARGET_VERSION:
         seed_default_orders(force_reset=True)
         cursor.execute("INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (?, ?)", 
@@ -130,29 +130,34 @@ def check_and_apply_migrations() -> None:
 
 
 def seed_default_orders(force_reset: bool = False) -> None:
-    """Pre-seed database with real Tier-2/3 Indian e-commerce orders."""
+    """Pre-seed database with real Tier-2/3 Indian e-commerce orders (Non-destructive to custom orders)."""
     conn = get_db_connection()
     cursor = conn.cursor()
     
+    from core.test_cases import REAL_SHAPED_TEST_CASES
+    from core.pipeline import process_dhaga_order
+    
+    seed_ids = [tc["id"] for tc in REAL_SHAPED_TEST_CASES]
+
+    # Non-destructive reset: only delete and re-seed canonical demo IDs, never wiping user-ingested custom orders
     if force_reset:
-        cursor.execute("DELETE FROM audit_log")
-        cursor.execute("DELETE FROM whatsapp_logs")
-        cursor.execute("DELETE FROM shipping_labels")
-        cursor.execute("DELETE FROM orders")
+        placeholders = ",".join("?" for _ in seed_ids)
+        cursor.execute(f"DELETE FROM audit_log WHERE order_id IN ({placeholders})", seed_ids)
+        cursor.execute(f"DELETE FROM whatsapp_logs WHERE order_id IN ({placeholders})", seed_ids)
+        cursor.execute(f"DELETE FROM shipping_labels WHERE order_id IN ({placeholders})", seed_ids)
+        cursor.execute(f"DELETE FROM orders WHERE order_id IN ({placeholders})", seed_ids)
         conn.commit()
 
-    cursor.execute("SELECT COUNT(*) as count FROM orders")
-    count = cursor.fetchone()["count"]
+    cursor.execute("SELECT order_id FROM orders")
+    existing_ids = {row["order_id"] for row in cursor.fetchall()}
+    needed_tcs = [tc for tc in REAL_SHAPED_TEST_CASES if tc["id"] not in existing_ids or force_reset]
     
-    if count == 0:
-        from core.test_cases import REAL_SHAPED_TEST_CASES
-        from core.pipeline import process_dhaga_order
-        
+    if needed_tcs:
         fc_list = ["Bhiwandi FC", "Gurugram FC", "Hyderabad FC"]
 
-        for i, tc in enumerate(REAL_SHAPED_TEST_CASES):
+        for i, tc in enumerate(needed_tcs):
             order_id = tc["id"]
-            fc = fc_list[i % len(fc_list)]
+            fc = tc.get("origin_fc") or fc_list[i % len(fc_list)]
             now_iso = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             # Determine initial mock data based on test case
@@ -166,10 +171,15 @@ def seed_default_orders(force_reset: bool = False) -> None:
             )
 
             status = "AUTO_APPROVED"
-            if res.decision == "HOLD_WHATSAPP_CONFIRMATION":
+            if tc.get("initial_status"):
+                status = tc["initial_status"]
+            elif res.decision == "HOLD_WHATSAPP_CONFIRMATION":
                 status = "HELD_WHATSAPP"
             elif res.decision == "REJECT_UNSERVICEABLE_ADDRESS":
                 status = "BLOCKED_FRAUD"
+
+            dead_freight = 120.0 if status == "CANCELLED_RESTOCKED" else res.logistics_loss_prevented_inr
+            dec_summary = "CANCELLED: Customer cancelled order via WhatsApp. Garment returned to inventory & saved ₹120 freight." if status == "CANCELLED_RESTOCKED" else res.decision_summary
 
             cursor.execute("""
             INSERT OR REPLACE INTO orders 
@@ -185,8 +195,8 @@ def seed_default_orders(force_reset: bool = False) -> None:
                 status,
                 res.rto_assessment.risk_score,
                 res.rto_assessment.risk_tier,
-                res.decision_summary,
-                res.logistics_loss_prevented_inr,
+                dec_summary,
+                dead_freight,
                 res.fast_model,
                 res.judgment_model or "None",
                 now_iso,
@@ -215,32 +225,59 @@ def seed_default_orders(force_reset: bool = False) -> None:
             ))
 
             # WhatsApp log
-            if res.whatsapp_intervention:
+            if res.whatsapp_intervention or status == "CANCELLED_RESTOCKED":
                 wi = res.whatsapp_intervention
+                wa_msg = wi.customer_message_hinglish if wi else f"Namaste {tc['customer_name']}! Dhaga & Co. order confirmation."
+                wa_replies = wi.quick_reply_suggestions if wi else ["Confirm Location on Map", "Correct Pincode", "Cancel Order"]
+                wa_missing = wi.missing_fields_highlighted if wi else ["Correct 6-digit Pincode for your location"]
+                wa_status = "CUSTOMER_CANCELLED" if status == "CANCELLED_RESTOCKED" else "AWAITING_REPLY"
                 cursor.execute("""
                 INSERT INTO whatsapp_logs
-                (order_id, message_body, status, quick_replies, missing_details, sent_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (order_id, message_body, status, quick_replies, missing_details, sent_at, resolved_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, (
                     order_id,
-                    wi.customer_message_hinglish,
-                    "AWAITING_REPLY",
-                    json.dumps(wi.quick_reply_suggestions),
-                    json.dumps(wi.missing_fields_highlighted),
-                    now_iso
+                    wa_msg,
+                    wa_status,
+                    json.dumps(wa_replies),
+                    json.dumps(wa_missing),
+                    now_iso,
+                    now_iso if status == "CANCELLED_RESTOCKED" else None
                 ))
 
             # Audit trail
-            cursor.execute("""
-            INSERT INTO audit_log (order_id, action, actor, timestamp, notes)
-            VALUES (?, ?, ?, ?, ?)
-            """, (
-                order_id,
-                f"ORDER_INGESTED_{status}",
-                "SYSTEM_COD_SHIELD",
-                now_iso,
-                f"Initial qualification: {res.decision_summary}"
-            ))
+            if status == "CANCELLED_RESTOCKED":
+                cursor.execute("""
+                INSERT INTO audit_log (order_id, action, actor, timestamp, notes)
+                VALUES (?, ?, ?, ?, ?)
+                """, (
+                    order_id,
+                    "ORDER_INGESTED_HELD_WHATSAPP",
+                    "SYSTEM_COD_SHIELD",
+                    now_iso,
+                    "Initial qualification: HOLD: Pincode circle conflict detected. WhatsApp self-resolution queued."
+                ))
+                cursor.execute("""
+                INSERT INTO audit_log (order_id, action, actor, timestamp, notes)
+                VALUES (?, ?, ?, ?, ?)
+                """, (
+                    order_id,
+                    "CUSTOMER_WHATSAPP_CANCELLED",
+                    "WHATSAPP_BOT",
+                    now_iso,
+                    "Customer opted to cancel COD order via WhatsApp. Inventory restocked & ₹120 freight saved."
+                ))
+            else:
+                cursor.execute("""
+                INSERT INTO audit_log (order_id, action, actor, timestamp, notes)
+                VALUES (?, ?, ?, ?, ?)
+                """, (
+                    order_id,
+                    f"ORDER_INGESTED_{status}",
+                    "SYSTEM_COD_SHIELD",
+                    now_iso,
+                    f"Initial qualification: {res.decision_summary}"
+                ))
 
         conn.commit()
 
