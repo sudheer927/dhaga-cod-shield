@@ -420,3 +420,96 @@ def get_db_metrics() -> Dict[str, Any]:
         "freight_saved_inr": freight_saved,
         "automation_rate": round((auto_approved / total * 100), 1) if total > 0 else 0.0
     }
+
+
+def simulate_customer_whatsapp_reply(order_id: str, action_type: str, extra_text: str = "") -> bool:
+    """
+    Simulates a live customer reply over WhatsApp:
+    - 'CONFIRM': Customer confirms location or adds door number -> auto-clears order to DISPATCHED
+    - 'SHARE_GPS': Customer drops a WhatsApp location pin -> adds GPS coords, auto-clears to DISPATCHED
+    - 'CANCEL': Customer cancels COD order -> updates to CANCELLED_RESTOCKED, saves ₹120 freight
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    now_iso = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    if action_type == "CONFIRM":
+        new_status = "DISPATCHED"
+        note = extra_text or "Customer verified address via WhatsApp: 'House #14, near Shiv Mandir'."
+        cursor.execute("""
+        UPDATE orders 
+        SET status = ?, risk_score = 15, risk_tier = 'LOW', 
+            decision_summary = 'AUTO-CLEARED: Customer confirmed house number via WhatsApp.',
+            updated_at = ?
+        WHERE order_id = ?
+        """, (new_status, now_iso, order_id))
+
+        # Update label
+        cursor.execute("""
+        UPDATE shipping_labels
+        SET premise = COALESCE(NULLIF(premise, ''), 'House #14'),
+            normalized_address = 'House #14, ' || normalized_address
+        WHERE order_id = ?
+        """, (order_id,))
+
+        # Update WhatsApp
+        cursor.execute("""
+        UPDATE whatsapp_logs
+        SET status = 'CUSTOMER_CONFIRMED', resolved_at = ?
+        WHERE order_id = ?
+        """, (now_iso, order_id))
+
+        # Audit
+        cursor.execute("""
+        INSERT INTO audit_log (order_id, action, actor, timestamp, notes)
+        VALUES (?, 'CUSTOMER_WHATSAPP_CONFIRMED', 'WHATSAPP_BOT', ?, ?)
+        """, (order_id, now_iso, note))
+
+    elif action_type == "SHARE_GPS":
+        new_status = "DISPATCHED"
+        note = "Customer dropped WhatsApp GPS Pin: 26.5023° N, 83.7791° E."
+        cursor.execute("""
+        UPDATE orders 
+        SET status = ?, risk_score = 10, risk_tier = 'LOW',
+            decision_summary = 'AUTO-CLEARED: Precision GPS Location verified by customer.',
+            updated_at = ?
+        WHERE order_id = ?
+        """, (new_status, now_iso, order_id))
+
+        cursor.execute("""
+        UPDATE whatsapp_logs
+        SET status = 'GPS_PIN_CONFIRMED', resolved_at = ?
+        WHERE order_id = ?
+        """, (now_iso, order_id))
+
+        cursor.execute("""
+        INSERT INTO audit_log (order_id, action, actor, timestamp, notes)
+        VALUES (?, 'CUSTOMER_GPS_PIN_DROPPED', 'WHATSAPP_BOT', ?, ?)
+        """, (order_id, now_iso, note))
+
+    elif action_type == "CANCEL":
+        new_status = "CANCELLED_RESTOCKED"
+        note = "Customer opted to cancel COD order via WhatsApp 1-click button. Saved ₹120 dead freight."
+        cursor.execute("""
+        UPDATE orders 
+        SET status = ?, dead_freight_saved = 120.0,
+            decision_summary = 'CANCELLED: Customer cancelled order. Garment returned to inventory.',
+            updated_at = ?
+        WHERE order_id = ?
+        """, (new_status, now_iso, order_id))
+
+        cursor.execute("""
+        UPDATE whatsapp_logs
+        SET status = 'CUSTOMER_CANCELLED', resolved_at = ?
+        WHERE order_id = ?
+        """, (now_iso, order_id))
+
+        cursor.execute("""
+        INSERT INTO audit_log (order_id, action, actor, timestamp, notes)
+        VALUES (?, 'CUSTOMER_WHATSAPP_CANCELLED', 'WHATSAPP_BOT', ?, ?)
+        """, (order_id, now_iso, note))
+
+    conn.commit()
+    conn.close()
+    return True
+

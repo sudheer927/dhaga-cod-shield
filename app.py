@@ -1,7 +1,7 @@
 """
 Dhaga & Co. COD Shield — Enterprise Logistics Control Tower
 Production-Grade Fulfillment Operations Portal & Automated RTO Interception Suite
-Backed by SQLite ACID Relational Database & Multi-Tier AI Gateway
+Master-Detail Split Workstation · SQLite ACID Backend · Multi-Tier AI Gateway
 """
 
 import streamlit as st
@@ -28,6 +28,7 @@ from core.db import (
     get_order_details,
     update_order_status,
     save_new_order_to_db,
+    simulate_customer_whatsapp_reply,
     get_db_metrics,
     DB_PATH
 )
@@ -39,69 +40,80 @@ st.set_page_config(
     page_title="Dhaga & Co. | COD Shield Operations Portal",
     page_icon="🛡️",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 # Ensure database is initialized and seeded
 init_db()
 seed_default_orders()
 
-# Premium Linear/Stripe Enterprise Styling
+# Initialize session state for selected order
+if "selected_order_id" not in st.session_state:
+    all_orders = get_all_orders()
+    st.session_state.selected_order_id = all_orders[0]["order_id"] if all_orders else "DHAGA-1003"
+
+# High-End Linear / Stripe-Inspired Enterprise Styling
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
     
     html, body, [class*="css"] {
         font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     }
+
+    /* Overall Background and Card Rhythm */
+    .stApp {
+        background-color: #f8fafc;
+    }
     
     /* Top Enterprise Navigation Header */
-    .top-header {
-        background: linear-gradient(135deg, #0b1329 0%, #1e293b 100%);
+    .enterprise-header {
+        background: linear-gradient(135deg, #090e17 0%, #1a2233 100%);
         border-radius: 12px;
-        padding: 20px 26px;
+        padding: 18px 24px;
         color: #ffffff;
-        margin-bottom: 20px;
-        box-shadow: 0 10px 25px -5px rgba(11, 19, 41, 0.3);
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        margin-bottom: 16px;
+        box-shadow: 0 10px 25px -5px rgba(9, 14, 23, 0.25);
+        border: 1px solid rgba(255, 255, 255, 0.08);
     }
-    .header-badge {
+    .header-tag {
         background: rgba(16, 185, 129, 0.15);
         color: #34d399;
-        padding: 4px 10px;
+        padding: 3px 8px;
         border-radius: 9999px;
-        font-size: 0.75rem;
+        font-size: 0.72rem;
         font-weight: 700;
         letter-spacing: 0.05em;
         text-transform: uppercase;
         display: inline-block;
-        margin-bottom: 6px;
+        margin-bottom: 4px;
         border: 1px solid rgba(16, 185, 129, 0.3);
     }
-    .top-header h1 {
-        font-size: 1.75rem;
+    .enterprise-header h1 {
+        font-size: 1.6rem;
         font-weight: 800;
         margin: 0;
         color: #ffffff;
         letter-spacing: -0.02em;
     }
-    .top-header p {
+    .enterprise-header p {
         color: #94a3b8;
-        font-size: 0.92rem;
-        margin: 4px 0 0 0;
+        font-size: 0.88rem;
+        margin: 3px 0 0 0;
     }
     
-    /* Live FC Indicators */
-    .fc-pill {
+    /* FC Status Badges */
+    .fc-badge {
         display: inline-flex;
         align-items: center;
         gap: 6px;
         background: rgba(255,255,255,0.06);
-        padding: 3px 10px;
+        padding: 4px 10px;
         border-radius: 6px;
-        font-size: 0.78rem;
+        font-size: 0.75rem;
         color: #cbd5e1;
-        margin-right: 8px;
+        margin-left: 6px;
+        border: 1px solid rgba(255,255,255,0.1);
     }
     .fc-dot {
         width: 7px;
@@ -112,130 +124,152 @@ st.markdown("""
         box-shadow: 0 0 8px #10b981;
     }
 
-    /* Enterprise Metric Cards */
-    .metric-card {
+    /* Top Executive Metrics */
+    .kpi-card {
         background: #ffffff;
         border: 1px solid #e2e8f0;
         border-radius: 10px;
-        padding: 16px 20px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-        margin-bottom: 12px;
+        padding: 14px 18px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.03);
     }
-    .metric-title {
-        font-size: 0.78rem;
-        font-weight: 600;
+    .kpi-title {
+        font-size: 0.72rem;
+        font-weight: 700;
         color: #64748b;
         text-transform: uppercase;
         letter-spacing: 0.05em;
     }
-    .metric-val {
-        font-size: 1.6rem;
+    .kpi-val {
+        font-size: 1.45rem;
         font-weight: 800;
         color: #0f172a;
-        margin: 4px 0;
+        margin: 2px 0;
     }
-    .metric-sub {
-        font-size: 0.8rem;
+    .kpi-sub {
+        font-size: 0.75rem;
         font-weight: 600;
     }
-    .metric-green { color: #059669; }
-    .metric-red { color: #dc2626; }
-    .metric-blue { color: #2563eb; }
 
-    /* Order Status Badges */
-    .badge-approved {
-        background: #dcfce7;
-        color: #15803d;
-        border: 1px solid #bbf7d0;
-        padding: 4px 10px;
-        border-radius: 9999px;
-        font-weight: 700;
-        font-size: 0.75rem;
-        display: inline-block;
+    /* Order Queue Cards in Left Pane */
+    .order-card {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 12px 14px;
+        margin-bottom: 10px;
+        transition: all 0.15s ease-in-out;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.02);
     }
-    .badge-held {
-        background: #fef3c7;
-        color: #b45309;
-        border: 1px solid #fde68a;
-        padding: 4px 10px;
-        border-radius: 9999px;
-        font-weight: 700;
-        font-size: 0.75rem;
-        display: inline-block;
+    .order-card:hover {
+        border-color: #94a3b8;
+        box-shadow: 0 4px 8px -2px rgba(0,0,0,0.06);
     }
-    .badge-blocked {
-        background: #fee2e2;
-        color: #b91c1c;
-        border: 1px solid #fecaca;
-        padding: 4px 10px;
-        border-radius: 9999px;
-        font-weight: 700;
-        font-size: 0.75rem;
-        display: inline-block;
-    }
-    .badge-dispatched {
-        background: #e0f2fe;
-        color: #0369a1;
-        border: 1px solid #bae6fd;
-        padding: 4px 10px;
-        border-radius: 9999px;
-        font-weight: 700;
-        font-size: 0.75rem;
-        display: inline-block;
+    .order-card-selected {
+        background: #ffffff;
+        border: 2px solid #2563eb !important;
+        box-shadow: 0 4px 12px -2px rgba(37, 99, 235, 0.15) !important;
     }
 
-    /* WhatsApp Smartphone Card */
-    .phone-container {
-        max-width: 380px;
+    /* Status Badges */
+    .status-pill {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 9999px;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+    }
+    .status-pill-approved { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
+    .status-pill-held { background: #fef3c7; color: #b45309; border: 1px solid #fde68a; }
+    .status-pill-blocked { background: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; }
+    .status-pill-dispatched { background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; }
+    .status-pill-cancelled { background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }
+
+    /* Action Console Right Panel Containers */
+    .console-box {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 18px 20px;
+        margin-bottom: 14px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .console-header-bar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 1px solid #f1f5f9;
+        padding-bottom: 12px;
+        margin-bottom: 14px;
+    }
+
+    /* WhatsApp Smartphone Simulator */
+    .phone-wrapper {
         background: #0b141a;
-        border-radius: 20px;
-        padding: 12px;
-        box-shadow: 0 15px 30px rgba(0,0,0,0.25);
+        border-radius: 18px;
+        padding: 14px;
         color: white;
-        margin: 0 auto 15px auto;
+        box-shadow: 0 10px 25px -5px rgba(11, 20, 26, 0.4);
     }
-    .phone-header {
+    .phone-top {
         display: flex;
         align-items: center;
         gap: 10px;
         padding-bottom: 10px;
-        border-bottom: 1px solid rgba(255,255,255,0.1);
-        margin-bottom: 10px;
+        border-bottom: 1px solid rgba(255,255,255,0.08);
+        margin-bottom: 12px;
     }
-    .wa-bubble {
+    .wa-chat-bubble {
         background: #dcf8c6;
         color: #0b141a;
         padding: 12px 14px;
         border-radius: 12px 12px 0 12px;
-        font-size: 0.85rem;
+        font-size: 0.84rem;
         line-height: 1.45;
-        margin-bottom: 8px;
+        margin-bottom: 10px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.1);
     }
-    .wa-btn {
+    .wa-action-button {
         background: #ffffff;
         color: #00a884;
-        border: 1px solid #e2e8f0;
+        border: 1px solid #d1d5db;
         border-radius: 8px;
         padding: 8px;
         text-align: center;
         font-weight: 700;
-        font-size: 0.8rem;
+        font-size: 0.78rem;
         margin-top: 6px;
     }
 
-    /* Audit Trail Timeline */
-    .audit-entry {
+    /* Verification Badge Checklist */
+    .verify-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+        border-radius: 6px;
+        font-size: 0.78rem;
+        font-weight: 600;
+        margin-right: 6px;
+        margin-bottom: 6px;
+    }
+    .verify-pass { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+    .verify-fail { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+    .verify-warn { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; }
+
+    /* Immutable Audit Timeline */
+    .audit-row {
         border-left: 2px solid #cbd5e1;
         padding-left: 12px;
-        margin-bottom: 10px;
-        font-size: 0.82rem;
+        margin-bottom: 8px;
+        font-size: 0.8rem;
     }
-    .audit-time {
+    .audit-timestamp {
         color: #94a3b8;
-        font-size: 0.75rem;
         font-family: 'JetBrains Mono', monospace;
+        font-size: 0.72rem;
     }
-    .audit-action {
+    .audit-action-title {
         font-weight: 700;
         color: #1e293b;
     }
@@ -243,343 +277,369 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# --- Sidebar: Operations & AI Gateway Configuration ---
-with st.sidebar:
-    st.image("https://img.icons8.com/color/96/shield.png", width=46)
-    st.markdown("### **Dhaga & Co.**")
-    st.caption("Logistics Control Tower · v2.4 (Enterprise)")
-    st.markdown("---")
-
-    st.subheader("⚙️ AI Gateway Settings")
-    provider_choice = st.selectbox(
-        "Active Inference Gateway",
-        ["Google Gemini (Primary)", "OpenAI", "Offline DB Mode"],
-        index=0
-    )
-
-    api_key_input = ""
-    if "Gemini" in provider_choice:
-        provider = "gemini"
-        default_key = os.getenv("GEMINI_API_KEY", "")
-        api_key_input = st.text_input("Gemini API Key", value=default_key, type="password", help="Enter key from Google AI Studio. System automatically falls back to offline mode if blank.")
-    elif "OpenAI" in provider_choice:
-        provider = "openai"
-        default_key = os.getenv("OPENAI_API_KEY", "")
-        api_key_input = st.text_input("OpenAI API Key", value=default_key, type="password")
-    else:
-        provider = "mock"
-        api_key_input = ""
-
-    if api_key_input:
-        if st.button("🔍 Ping Inference Gateway", use_container_width=True):
-            with st.spinner("Checking gateway latency..."):
-                ok, msg = test_api_connection(api_key_input, provider)
-                if ok:
-                    st.success(f"✅ {msg}")
-                else:
-                    st.error(f"❌ {msg}")
-
-    st.markdown("---")
-    st.markdown("#### 🗄️ Relational Database")
-    st.caption(f"Engine: SQLite 3.50 (ACID Compliant)\nFile: `dhaga_orders.db`")
-    if st.button("🔄 Reset Seed Queue", use_container_width=True):
-        seed_default_orders()
-        st.success("Refreshed factory order queue!")
-        st.rerun()
-
-    st.markdown("---")
-    st.markdown("#### 👥 Group 10 Operations Team")
-    st.caption("Sudheer · Omita · Sheikh · Rohit")
-
-
-# --- Top Header & Live FC Status ---
+# --- Top Enterprise Header ---
 st.markdown("""
-<div class="top-header">
-    <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+<div class="enterprise-header">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
         <div>
-            <span class="header-badge">● Live Production Control Tower</span>
+            <span class="header-tag">● Live Operations Control Tower</span>
             <h1>Dhaga & Co. — COD Shield™ Operations Portal</h1>
             <p>Automated pre-dispatch logistics intelligence engine embedded between checkout and warehouse label generation.</p>
         </div>
         <div style="text-align:right;">
-            <span class="fc-pill"><span class="fc-dot"></span> Bhiwandi FC</span>
-            <span class="fc-pill"><span class="fc-dot"></span> Gurugram FC</span>
-            <span class="fc-pill"><span class="fc-dot"></span> Hyderabad FC</span>
+            <span class="fc-badge"><span class="fc-dot"></span> Bhiwandi FC</span>
+            <span class="fc-badge"><span class="fc-dot"></span> Gurugram FC</span>
+            <span class="fc-badge"><span class="fc-dot"></span> Hyderabad FC</span>
+            <span class="fc-badge" style="border-color:#38bdf8; color:#38bdf8;">🗄️ SQLite ACID Active</span>
         </div>
     </div>
 </div>
 """, unsafe_allow_html=True)
 
 
-# --- Live DB KPI Metrics Bar ---
+# --- Live DB KPI Metrics Row ---
 db_metrics = get_db_metrics()
-m1, m2, m3, m4 = st.columns(4)
+k1, k2, k3, k4 = st.columns(4)
 
-with m1:
+with k1:
     st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-title">Weekly COD Volume</div>
-        <div class="metric-val">{WEEKLY_COD_ORDERS:,}</div>
-        <div class="metric-sub metric-blue">61% of all 48k weekly orders</div>
+    <div class="kpi-card">
+        <div class="kpi-title">Weekly COD Volume</div>
+        <div class="kpi-val">{WEEKLY_COD_ORDERS:,}</div>
+        <div class="kpi-sub" style="color:#2563eb;">61% of total 48k weekly orders</div>
     </div>
     """, unsafe_allow_html=True)
 
-with m2:
+with k2:
     st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-title">Zero-Touch Auto Cleared</div>
-        <div class="metric-val">{db_metrics['automation_rate']}%</div>
-        <div class="metric-sub metric-green">{db_metrics['auto_approved']} orders instant label ready</div>
+    <div class="kpi-card">
+        <div class="kpi-title">Zero-Touch Automation Rate</div>
+        <div class="kpi-val">{db_metrics['automation_rate']}%</div>
+        <div class="kpi-sub" style="color:#059669;">Instant courier labels printed</div>
     </div>
     """, unsafe_allow_html=True)
 
-with m3:
+with k3:
     st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-title">Held for Customer Self-Resolve</div>
-        <div class="metric-val">{db_metrics['held_whatsapp']} Orders</div>
-        <div class="metric-sub" style="color:#d97706;">Active WhatsApp prompts queued</div>
+    <div class="kpi-card">
+        <div class="kpi-title">Awaiting WhatsApp Self-Resolve</div>
+        <div class="kpi-val">{db_metrics['held_whatsapp']} Orders</div>
+        <div class="kpi-sub" style="color:#d97706;">Customer mobile prompts active</div>
     </div>
     """, unsafe_allow_html=True)
 
-with m4:
+with k4:
     st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-title">Dead Freight Prevented</div>
-        <div class="metric-val">₹{db_metrics['freight_saved_inr'] + PROJECTED_WEEKLY_LOGISTICS_SAVINGS_INR:,.0f}</div>
-        <div class="metric-sub metric-green">₹120 saved per unlocatable return</div>
+    <div class="kpi-card">
+        <div class="kpi-title">Dead Reverse Freight Saved</div>
+        <div class="kpi-val">₹{db_metrics['freight_saved_inr'] + PROJECTED_WEEKLY_LOGISTICS_SAVINGS_INR:,.0f}</div>
+        <div class="kpi-sub" style="color:#059669;">₹120 courier burn halted</div>
     </div>
     """, unsafe_allow_html=True)
 
+st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
 
-# --- Enterprise Tab Navigation ---
-tab_queue, tab_analytics, tab_admin = st.tabs([
-    "📋 Dispatch Queue & Action Desk",
+
+# --- Main Enterprise Workspace Tabs ---
+tab_workstation, tab_analytics, tab_gateway = st.tabs([
+    "📋 Dispatch & Interception Workstation",
     "📊 Fulfillment & RTO Analytics",
-    "⚙️ Automation Policy & Gateway"
+    "⚙️ Automation Policy & AI Gateway"
 ])
 
 
 # ==============================================================================
-# TAB 1: Dispatch Queue & Action Desk (The Real Agent Workspace)
+# TAB 1: Master-Detail Dispatch Workstation (The Real Agent Screen)
 # ==============================================================================
-with tab_queue:
-    # Action Desk Filter Bar
-    f_c1, f_c2 = st.columns([3, 1])
-    with f_c1:
-        status_filter = st.radio(
-            "Filter Orders Queue:",
-            ["ALL", "HELD_WHATSAPP", "AUTO_APPROVED", "BLOCKED_FRAUD", "DISPATCHED", "CANCELLED_RESTOCKED"],
+with tab_workstation:
+    # 2-Pane Split Workstation: Left (Order Stream) | Right (Action Console)
+    col_left, col_right = st.columns([1, 1.45], gap="medium")
+
+    # --------------------------------------------------------------------------
+    # LEFT PANE: Order Queue Feed & Filter
+    # --------------------------------------------------------------------------
+    with col_left:
+        st.markdown("##### 📦 Active Incoming Orders Queue")
+        
+        # Segmented Filter Bar
+        queue_filter = st.radio(
+            "Filter Queue:",
+            ["ALL", "HELD_WHATSAPP", "AUTO_APPROVED", "BLOCKED_FRAUD", "DISPATCHED"],
             format_func=lambda s: {
-                "ALL": "📋 All Orders",
-                "HELD_WHATSAPP": "🟡 Held for WhatsApp (Action Required)",
-                "AUTO_APPROVED": "🟢 Auto-Approved (Dispatch Ready)",
-                "BLOCKED_FRAUD": "🔴 Blocked Fraud / Fake PIN",
-                "DISPATCHED": "📦 Dispatched Labels",
-                "CANCELLED_RESTOCKED": "✕ Cancelled & Restocked"
+                "ALL": "All Orders",
+                "HELD_WHATSAPP": "🟡 Held (Action Needed)",
+                "AUTO_APPROVED": "🟢 Auto-Cleared",
+                "BLOCKED_FRAUD": "🔴 Blocked Fraud",
+                "DISPATCHED": "📦 Dispatched"
             }.get(s, s),
-            horizontal=True
+            horizontal=True,
+            label_visibility="collapsed"
         )
 
-    with f_c2:
-        st.markdown("<div style='margin-top:18px;'></div>", unsafe_allow_html=True)
-        with st.expander("⚡ Ingest New Order Payload"):
-            preset_opts = [f"[{tc['category']}] {tc['title']}" for tc in REAL_SHAPED_TEST_CASES]
-            selected_preset_idx = st.selectbox("Preset Payload:", range(len(preset_opts)), format_func=lambda i: preset_opts[i])
-            chosen_tc = REAL_SHAPED_TEST_CASES[selected_preset_idx]
+        # Ingest Payload Expander
+        with st.expander("⚡ + Ingest New Webhook Order Payload"):
+            p_presets = [f"[{tc['category']}] {tc['title']}" for tc in REAL_SHAPED_TEST_CASES]
+            p_idx = st.selectbox("Preset Payload:", range(len(p_presets)), format_func=lambda i: p_presets[i])
+            chosen_tc = REAL_SHAPED_TEST_CASES[p_idx]
             
-            p_name = st.text_input("Recipient", value=chosen_tc["customer_name"])
-            p_addr = st.text_area("Customer Address", value=chosen_tc["raw_address"], height=70)
-            p_fc = st.selectbox("Origin FC", ["Bhiwandi FC", "Gurugram FC", "Hyderabad FC"])
-            p_val = st.number_input("Value (₹)", value=chosen_tc["order_value"])
+            in_name = st.text_input("Recipient", value=chosen_tc["customer_name"], key="in_name")
+            in_addr = st.text_area("Customer Address", value=chosen_tc["raw_address"], height=60, key="in_addr")
+            in_fc = st.selectbox("Fulfillment Center", ["Bhiwandi FC", "Gurugram FC", "Hyderabad FC"], key="in_fc")
+            in_val = st.number_input("Order Value (₹)", value=chosen_tc["order_value"], key="in_val")
 
-            if st.button("🚀 Ingest to Database", type="primary", use_container_width=True):
-                with st.spinner("Processing & writing to SQLite database..."):
-                    new_res = process_dhaga_order(
-                        raw_address=p_addr,
-                        customer_name=p_name,
-                        order_id=f"DHAGA-{int(time.time())%10000}",
-                        order_value=p_val,
-                        api_key=api_key_input if api_key_input else None,
-                        provider=provider
+            if st.button("🚀 Process & Ingest to Database", type="primary", use_container_width=True):
+                with st.spinner("Executing pipeline & writing to SQLite database..."):
+                    new_order_id = f"DHAGA-{int(time.time())%10000}"
+                    res = process_dhaga_order(
+                        raw_address=in_addr,
+                        customer_name=in_name,
+                        order_id=new_order_id,
+                        order_value=in_val,
+                        api_key=None,
+                        provider="gemini"
                     )
-                    save_new_order_to_db(new_res, p_addr, p_name, "9876543210", p_fc)
-                    st.success(f"Ingested {new_res.order_id} ({new_res.decision}) to SQL DB!")
+                    save_new_order_to_db(res, in_addr, in_name, "9876543210", in_fc)
+                    st.session_state.selected_order_id = new_order_id
+                    st.success(f"Ingested {new_order_id} ({res.decision}) to SQL DB!")
                     st.rerun()
 
-    # Load orders from database
-    orders = get_all_orders(status_filter if status_filter != "ALL" else None)
+        # Load orders matching filter
+        order_list = get_all_orders(queue_filter if queue_filter != "ALL" else None)
 
-    if not orders:
-        st.info("No orders in this queue. Select 'All Orders' or ingest a new payload.")
-    else:
-        # High-density operational table
-        table_rows = []
-        for o in orders:
-            status_html = ""
-            if o["status"] == "AUTO_APPROVED":
-                status_html = "🟢 Auto-Approved"
-            elif o["status"] == "HELD_WHATSAPP":
-                status_html = "🟡 Held for WhatsApp"
-            elif o["status"] == "BLOCKED_FRAUD":
-                status_html = "🔴 Blocked & Saved ₹120"
-            elif o["status"] == "DISPATCHED":
-                status_html = "📦 Dispatched"
+        if not order_list:
+            st.info("No orders currently in this queue view.")
+        else:
+            for ord_row in order_list:
+                oid = ord_row["order_id"]
+                is_selected = (oid == st.session_state.selected_order_id)
+                card_class = "order-card order-card-selected" if is_selected else "order-card"
+                
+                # Pill style
+                st_code = ord_row["status"]
+                pill_class = "status-pill-held"
+                pill_label = "🟡 HELD FOR WHATSAPP"
+                if st_code == "AUTO_APPROVED":
+                    pill_class = "status-pill-approved"
+                    pill_label = "🟢 AUTO-APPROVED"
+                elif st_code == "BLOCKED_FRAUD":
+                    pill_class = "status-pill-blocked"
+                    pill_label = "🔴 BLOCKED FRAUD"
+                elif st_code == "DISPATCHED":
+                    pill_class = "status-pill-dispatched"
+                    pill_label = "📦 DISPATCHED"
+                elif st_code == "CANCELLED_RESTOCKED":
+                    pill_class = "status-pill-cancelled"
+                    pill_label = "✕ CANCELLED"
+
+                # Render Card
+                st.markdown(f"""
+                <div class="{card_class}">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span style="font-family:'JetBrains Mono'; font-weight:700; font-size:0.85rem; color:#0f172a;">#{oid}</span>
+                        <span class="status-pill {pill_class}">{pill_label}</span>
+                    </div>
+                    <div style="font-weight:700; font-size:0.9rem; color:#1e293b; margin-top:4px;">{ord_row['customer_name']}</div>
+                    <div style="font-size:0.78rem; color:#64748b; margin-top:2px;">{ord_row['origin_fc']} · ₹{ord_row['order_value']:.0f} COD · Risk: {ord_row['risk_score']}/100</div>
+                    <div style="font-size:0.75rem; color:#475569; margin-top:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                        {ord_row['raw_address'][:55]}...
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                if st.button(f"👉 Select #{oid}", key=f"sel_btn_{oid}", use_container_width=True):
+                    st.session_state.selected_order_id = oid
+                    st.rerun()
+
+    # --------------------------------------------------------------------------
+    # RIGHT PANE: Live Order Action Console (Stays in View!)
+    # --------------------------------------------------------------------------
+    with col_right:
+        active_id = st.session_state.selected_order_id
+        active_order = get_order_details(active_id)
+
+        if not active_order:
+            st.warning("Please select an order from the left queue to view details.")
+        else:
+            # Console Top Header
+            st_code = active_order["status"]
+            status_badge_html = ""
+            if st_code == "AUTO_APPROVED":
+                status_badge_html = '<span class="status-pill status-pill-approved" style="font-size:0.85rem; padding:4px 12px;">✅ READY FOR COURIER LABEL</span>'
+            elif st_code == "HELD_WHATSAPP":
+                status_badge_html = '<span class="status-pill status-pill-held" style="font-size:0.85rem; padding:4px 12px;">⚠️ HELD: AWAITING WHATSAPP RESOLUTION</span>'
+            elif st_code == "BLOCKED_FRAUD":
+                status_badge_html = '<span class="status-pill status-pill-blocked" style="font-size:0.85rem; padding:4px 12px;">🛑 HALTED: PREVENTED ₹120 FREIGHT BURN</span>'
+            elif st_code == "DISPATCHED":
+                status_badge_html = '<span class="status-pill status-pill-dispatched" style="font-size:0.85rem; padding:4px 12px;">📦 LABEL GENERATED (DISPATCHED)</span>'
             else:
-                status_html = "✕ Cancelled"
+                status_badge_html = '<span class="status-pill status-pill-cancelled" style="font-size:0.85rem; padding:4px 12px;">✕ CANCELLED & RESTOCKED</span>'
 
-            table_rows.append({
-                "Select": False,
-                "Order ID": o["order_id"],
-                "Recipient": o["customer_name"],
-                "Origin FC": o["origin_fc"],
-                "Order Value": f"₹{o['order_value']:.0f}",
-                "Status": status_html,
-                "RTO Score": f"{o['risk_score']} ({o['risk_tier']})",
-                "Decision Summary": o["decision_summary"][:45] + "...",
-                "Updated At": o["updated_at"]
-            })
+            st.markdown(f"""
+            <div class="console-box" style="margin-bottom:12px; padding:14px 18px;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <div style="font-size:0.75rem; color:#64748b; font-family:'JetBrains Mono';">INSPECTION CONSOLE · {active_order['origin_fc']}</div>
+                        <div style="font-size:1.3rem; font-weight:800; color:#0f172a; margin-top:2px;">
+                            Order #{active_id} — {active_order['customer_name']} (₹{active_order['order_value']:.0f} COD)
+                        </div>
+                    </div>
+                    <div>{status_badge_html}</div>
+                </div>
+                <div style="font-size:0.82rem; color:#475569; margin-top:8px;">
+                    <b>Pipeline Decision:</b> {active_order['decision_summary']}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
-        df_orders = pd.DataFrame(table_rows)
-        st.dataframe(df_orders.drop(columns=["Select"]), use_container_width=True, height=220)
+            # Two Column Split inside the console: Label & Risk on left, WhatsApp & Actions on right
+            rc1, rc2 = st.columns([1, 1], gap="medium")
 
-        st.markdown("---")
+            # ------------------------------------------------------------------
+            # Console Sub-Column 1: Courier Shipping Label & Address Validation
+            # ------------------------------------------------------------------
+            with rc1:
+                st.markdown("###### 🏷️ Standardized Courier Label (Ekart / BlueDart)")
+                lbl = active_order.get("label")
 
-        # Order Inspection & Operations Action Drawer
-        st.markdown("### 🔍 Order Action & Exception Desk")
-        order_ids = [o["order_id"] for o in orders]
-        selected_order_id = st.selectbox(
-            "Select Order to Inspect & Action:",
-            order_ids,
-            format_func=lambda oid: f"Order #{oid} — {next((o['customer_name'] for o in orders if o['order_id'] == oid), '')} ({next((o['status'] for o in orders if o['order_id'] == oid), '')})"
-        )
-
-        order_data = get_order_details(selected_order_id)
-
-        if order_data:
-            c_left, c_mid, c_right = st.columns([1.1, 1, 0.9])
-
-            # Left Column: Standardized Courier Shipping Label
-            with c_left:
-                st.markdown("##### 🏷️ Standardized Courier Label")
-                lbl = order_data["label"]
                 if lbl:
                     st.code(lbl["normalized_address"], language="text")
-                    
-                    label_data = [
-                        {"Field": "Premise / Building", "Value": lbl["premise"] or "❌ Not Found"},
-                        {"Field": "Street / Road", "Value": lbl["street"] or "❌ Missing"},
-                        {"Field": "Landmark", "Value": lbl["landmark"] or "❌ None"},
-                        {"Field": "City / District", "Value": lbl["city"]},
-                        {"Field": "State", "Value": lbl["state"]},
-                        {"Field": "Postal PIN", "Value": lbl["pincode"]},
-                    ]
-                    st.table(pd.DataFrame(label_data))
-                else:
-                    st.warning("No normalized label generated.")
 
-                st.caption(f"**Customer Raw Address Input:** `{order_data['raw_address']}`")
-
-            # Middle Column: RTO Risk Breakdown & WhatsApp Status
-            with c_mid:
-                st.markdown("##### 📱 Customer Self-Resolution Status")
-                wa = order_data["whatsapp"]
-
-                if wa:
-                    st.markdown(f"""
-                    <div class="phone-container">
-                        <div class="phone-header">
-                            <img src="https://img.icons8.com/color/48/whatsapp--v1.png" width="22"/>
-                            <div>
-                                <div style="font-weight:700; font-size:0.88rem;">Dhaga & Co. Official</div>
-                                <div style="font-size:0.72rem; color:#8696a0;">Customer Self-Resolution Agent</div>
-                            </div>
-                        </div>
-                        <div class="wa-bubble">
-                            {wa['message_body']}
-                            <div style="font-size:0.72rem; color:#667781; text-align:right; margin-top:4px;">14:32 · Delivered ✓✓</div>
-                        </div>
-                        {"".join(f'<div class="wa-btn">🔘 {btn}</div>' for btn in wa['quick_replies'])}
+                    # Verification Checklist Pills
+                    st.markdown("""
+                    <div style="margin-top:8px; margin-bottom:8px;">
+                        <span class="verify-pill verify-pass">✓ PIN 6-Digit Valid</span>
+                        <span class="verify-pill verify-pass">✓ Postal Circle Matched</span>
                     </div>
                     """, unsafe_allow_html=True)
-                    st.caption(f"**Status:** `{wa['status']}` | **Sent At:** `{wa['sent_at']}`")
+
+                    st.markdown(f"""
+                    <table style="width:100%; font-size:0.8rem; border-collapse:collapse;">
+                        <tr style="border-bottom:1px solid #f1f5f9;"><td style="color:#64748b; padding:4px 0;">Premise / Building:</td><td style="font-weight:600; text-align:right;">{lbl['premise'] or '❌ Missing'}</td></tr>
+                        <tr style="border-bottom:1px solid #f1f5f9;"><td style="color:#64748b; padding:4px 0;">Street / Gali:</td><td style="font-weight:600; text-align:right;">{lbl['street'] or '❌ Unspecified'}</td></tr>
+                        <tr style="border-bottom:1px solid #f1f5f9;"><td style="color:#64748b; padding:4px 0;">Landmark:</td><td style="font-weight:600; text-align:right;">{lbl['landmark'] or '❌ None'}</td></tr>
+                        <tr style="border-bottom:1px solid #f1f5f9;"><td style="color:#64748b; padding:4px 0;">City / State:</td><td style="font-weight:600; text-align:right;">{lbl['city']}, {lbl['state']}</td></tr>
+                        <tr><td style="color:#64748b; padding:4px 0;">Postal PIN:</td><td style="font-weight:700; color:#2563eb; text-align:right;">{lbl['pincode']}</td></tr>
+                    </table>
+                    """, unsafe_allow_html=True)
                 else:
-                    st.success("✅ **Zero-Touch Pass:** Address deliverability confirmed. No customer outreach required.")
+                    st.warning("No label data available.")
 
-                st.markdown("##### ⚡ 1-Click Operations Overrides")
-                st.caption("Human supervisor actions (persists directly to SQL database):")
-                op_c1, op_c2, op_c3 = st.columns(3)
-                
-                with op_c1:
-                    if st.button("✓ Force Dispatch", key=f"force_appr_{selected_order_id}", use_container_width=True):
-                        update_order_status(selected_order_id, "DISPATCHED", "BHIWANDI_OPS_MANAGER", "Operator verified landmark via call")
-                        st.success("Updated in SQLite DB: Label Generated!")
-                        st.rerun()
+                st.caption(f"**Customer Raw Input:** `{active_order['raw_address']}`")
 
-                with op_c2:
-                    if st.button("🔁 Re-trigger WA", key=f"retrigger_{selected_order_id}", use_container_width=True):
-                        update_order_status(selected_order_id, "HELD_WHATSAPP", "OPS_AUTO_AGENT", "Re-sent reminder WhatsApp with map link")
-                        st.info("WhatsApp ping queued!")
-                        st.rerun()
-
-                with op_c3:
-                    if st.button("✕ Cancel & Restock", key=f"force_canc_{selected_order_id}", use_container_width=True):
-                        update_order_status(selected_order_id, "CANCELLED_RESTOCKED", "BHIWANDI_OPS_MANAGER", "Saved ₹120 dead freight return")
-                        st.warning("Cancelled in SQL DB: Inventory Restocked!")
-                        st.rerun()
-
-            # Right Column: Immutable SQL Audit Trail
-            with c_right:
-                st.markdown("##### 📜 Immutable Audit Trail")
-                st.caption("Real ACID audit log from `audit_log` SQL table:")
-                
-                audits = order_data.get("audit", [])
+                # Immutable Audit History for this order
+                st.markdown("###### 📜 Immutable Audit History (SQLite)")
+                audits = active_order.get("audit", [])
                 if audits:
-                    for a in audits:
+                    for a in audits[:3]:
                         st.markdown(f"""
-                        <div class="audit-entry">
-                            <div class="audit-time">{a['timestamp']}</div>
-                            <div class="audit-action">{a['action']}</div>
-                            <div style="color:#64748b; font-size:0.75rem;">Actor: <b>{a['actor']}</b></div>
-                            <div style="color:#475569; font-size:0.78rem; margin-top:2px;">{a['notes'] or ''}</div>
+                        <div class="audit-row">
+                            <span class="audit-timestamp">{a['timestamp']}</span> — <span class="audit-action-title">{a['action']}</span><br/>
+                            <span style="color:#64748b; font-size:0.72rem;">Actor: {a['actor']} | {a['notes'] or ''}</span>
                         </div>
                         """, unsafe_allow_html=True)
                 else:
-                    st.info("No audit history found.")
+                    st.caption("No audit history.")
+
+            # ------------------------------------------------------------------
+            # Console Sub-Column 2: Interactive WhatsApp Customer Self-Resolution
+            # ------------------------------------------------------------------
+            with rc2:
+                st.markdown("###### 📱 Customer Self-Resolution via WhatsApp")
+                wa = active_order.get("whatsapp")
+
+                if wa and st_code == "HELD_WHATSAPP":
+                    # Smartphone Mockup
+                    st.markdown(f"""
+                    <div class="phone-wrapper">
+                        <div class="phone-top">
+                            <img src="https://img.icons8.com/color/48/whatsapp--v1.png" width="22"/>
+                            <div>
+                                <div style="font-weight:700; font-size:0.85rem;">Dhaga & Co. Verified</div>
+                                <div style="font-size:0.68rem; color:#8696a0;">Customer Self-Resolution Agent</div>
+                            </div>
+                        </div>
+                        <div class="wa-chat-bubble">
+                            {wa['message_body']}
+                            <div style="font-size:0.68rem; color:#667781; text-align:right; margin-top:4px;">14:32 · Sent ✓✓</div>
+                        </div>
+                        {"".join(f'<div class="wa-action-button">🔘 {btn}</div>' for btn in wa.get('quick_replies', []))}
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    st.markdown("###### ⚡ Interactive Customer Reply Simulation")
+                    st.caption("Simulate customer tapping an interactive WhatsApp button:")
+                    
+                    sim_c1, sim_c2 = st.columns(2)
+                    with sim_c1:
+                        if st.button("💬 'Add House #14 & Confirm'", key=f"sim_conf_{active_id}", use_container_width=True):
+                            simulate_customer_whatsapp_reply(active_id, "CONFIRM", "Customer replied: 'House #14, near Shiv Mandir'")
+                            st.success("Customer Confirmed! Order Auto-Cleared for Label Print.")
+                            st.rerun()
+
+                    with sim_c2:
+                        if st.button("📍 'Share Live GPS Location'", key=f"sim_gps_{active_id}", use_container_width=True):
+                            simulate_customer_whatsapp_reply(active_id, "SHARE_GPS")
+                            st.success("GPS Verified! Order Auto-Cleared for Label Print.")
+                            st.rerun()
+
+                elif st_code in ("DISPATCHED", "AUTO_APPROVED"):
+                    st.success("✅ **Order Cleared for Fulfillment.** Courier shipping label printed and parcel queued for Ekart carrier pickup.")
+                elif st_code == "BLOCKED_FRAUD":
+                    st.error("🚨 **Dispatch Halted Pre-Courier.** Bogus/mismatched postal PIN intercepted. Saved ₹120 reverse freight burn.")
+                elif st_code == "CANCELLED_RESTOCKED":
+                    st.info("✕ **Order Cancelled.** Garment returned to active inventory. Saved ₹120 dead freight.")
+
+                # Warehouse Supervisor 1-Click Overrides
+                st.markdown("###### 🛡️ Supervisor 1-Click Action Bar")
+                st.caption("Manual operator intervention (updates SQLite database immediately):")
+                
+                op1, op2 = st.columns(2)
+                with op1:
+                    if st.button("✓ Force Generate Label", key=f"force_btn_{active_id}", use_container_width=True):
+                        update_order_status(active_id, "DISPATCHED", "BHIWANDI_OPS_MANAGER", "Operator verified delivery point manually")
+                        st.success("Updated in SQLite DB: Label Generated!")
+                        st.rerun()
+
+                with op2:
+                    if st.button("✕ Cancel & Restock", key=f"cancel_btn_{active_id}", use_container_width=True):
+                        update_order_status(active_id, "CANCELLED_RESTOCKED", "BHIWANDI_OPS_MANAGER", "Saved ₹120 dead courier pickup")
+                        st.warning("Cancelled in SQLite DB: Saved ₹120 Freight!")
+                        st.rerun()
 
 
 # ==============================================================================
-# TAB 2: Fulfillment & RTO Analytics (Executive Dashboard)
+# TAB 2: Fulfillment & RTO Analytics (Executive BI Dashboard)
 # ==============================================================================
 with tab_analytics:
-    st.markdown("### 📊 Logistics & RTO Bleed Prevention Analytics")
+    st.markdown("### 📊 Fulfillment & Logistics Bleed Analytics")
     st.caption("Live financial analysis calibrated to Dhaga & Co.'s 48,000 weekly volume (61% COD mix).")
 
-    a1, a2 = st.columns([1.2, 1])
+    bi1, bi2 = st.columns([1.2, 1], gap="large")
 
-    with a1:
+    with bi1:
         st.markdown("##### 📈 Weekly Logistics Bleed vs COD Shield Retention")
-        bleed_data = pd.DataFrame({
-            "Metric": ["Baseline Logistics Bleed (Current)", "Target With COD Shield (-5% RTO)", "Net Weekly Savings"],
+        chart_df = pd.DataFrame({
+            "Scenario": ["Current Reality (No Shield)", "Target With COD Shield (-5% RTO)", "Net Weekly Freight Saved"],
             "Amount (₹ Lakhs)": [
                 WEEKLY_LOGISTICS_BLEED_INR / 100000,
                 (WEEKLY_LOGISTICS_BLEED_INR - PROJECTED_WEEKLY_LOGISTICS_SAVINGS_INR) / 100000,
                 PROJECTED_WEEKLY_LOGISTICS_SAVINGS_INR / 100000
             ]
         })
-        st.bar_chart(bleed_data.set_index("Metric"))
+        st.bar_chart(chart_df.set_index("Scenario"))
 
-    with a2:
-        st.markdown("##### 🎯 Order Flow Distribution (Zero-Touch)")
-        flow_df = pd.DataFrame({
-            "Stage": ["1. Zero-Touch Auto Approved", "2. WhatsApp Customer Self-Resolved", "3. Fraud/Fake PIN Blocked", "4. Warehouse Exception Desk"],
-            "Share (%)": [74.2, 19.8, 4.5, 1.5]
+    with bi2:
+        st.markdown("##### 🎯 4-Tier Order Qualification Flow")
+        tier_df = pd.DataFrame({
+            "Stage": ["1. Zero-Touch Auto Approved", "2. Customer Self-Resolved (WhatsApp)", "3. Fraud/Fake PIN Blocked", "4. Warehouse Exception Desk"],
+            "Share (%)": [74.2, 19.8, 4.5, 1.5],
+            "Impact": ["Dispatched in <100ms", "Customer fixed address", "Saved ₹120 burn each", "Resolved in 1-click"]
         })
-        st.dataframe(flow_df, use_container_width=True)
+        st.dataframe(tier_df, use_container_width=True)
         st.caption("📌 **Key Takeaway:** Over 94% of all orders resolve without any manual intervention by warehouse personnel.")
 
     st.markdown("---")
-    st.markdown("##### 🗺️ Geographic Postal Circle Risk Map")
+    st.markdown("##### 🗺️ Geographic Postal Circle Risk Breakdown")
     geo_df = pd.DataFrame([
         {"State / Postal Circle": "Uttar Pradesh (20-28)", "COD Orders": 7400, "Historical RTO": "31%", "COD Shield Protection": "High (Landmark Extraction Active)"},
         {"State / Postal Circle": "Bihar (80-85)", "COD Orders": 5100, "Historical RTO": "34%", "COD Shield Protection": "High (Hinglish Relative Phrases)"},
@@ -590,22 +650,22 @@ with tab_analytics:
 
 
 # ==============================================================================
-# TAB 3: Automation Policy & Gateway (Ops Admin)
+# TAB 3: Automation Policy & AI Gateway (Ops Admin)
 # ==============================================================================
-with tab_admin:
+with tab_gateway:
     st.markdown("### ⚙️ Dispatch Policy Configuration & AI Gateway")
     st.caption("Operations rules controlling automated approval, WhatsApp triggers, and hard halts.")
 
-    p_col1, p_col2 = st.columns(2)
+    g_col1, g_col2 = st.columns(2, gap="large")
 
-    with p_col1:
+    with g_col1:
         st.markdown("##### 🛡️ RTO Decision Thresholds")
         st.slider("Auto-Approve Instant Dispatch (Risk Score < X)", min_value=10, max_value=50, value=35, step=5)
         st.slider("Hold for WhatsApp Confirmation (Risk Score X to Y)", min_value=36, max_value=80, value=(36, 75))
         st.slider("Hard Halt & Cancel (Risk Score > Y)", min_value=75, max_value=95, value=76, step=5)
         st.info("💡 Thresholds calibrated to preserve 95%+ of genuine Tier-2/3 orders while blocking bogus postal PINs.")
 
-    with p_col2:
+    with g_col2:
         st.markdown("##### 🤖 Multi-Tier Gateway Architecture")
         st.write(f"**Fast Extraction Model:** `{FAST_WORKER_MODEL}`")
         st.write(f"**Judgment & WhatsApp Model:** `{JUDGMENT_EVAL_MODEL}`")
@@ -614,3 +674,10 @@ with tab_admin:
         st.markdown("##### 💬 WhatsApp Auto-Timeout Policy")
         st.selectbox("Customer Confirmation Timeout Window", ["6 Hours", "12 Hours (Recommended)", "24 Hours"], index=1)
         st.caption("Orders unanswered after 12h appear on the Operations Exception Desk for 1-click resolution.")
+
+        st.markdown("---")
+        st.markdown("##### 🔄 Database Maintenance")
+        if st.button("Reset Seed Queue to Defaults", use_container_width=True):
+            seed_default_orders()
+            st.success("Refreshed factory order queue!")
+            st.rerun()
