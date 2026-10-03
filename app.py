@@ -612,10 +612,10 @@ with tab_workstation:
                         phone_buttons = ["Confirm Location on Map"]
                         if not circle_matched:
                             phone_buttons.append("Correct Pincode")
-                        elif not has_landmark:
-                            phone_buttons.append("Add Nearest Landmark")
                         elif not has_door:
                             phone_buttons.append("Update House Number")
+                        elif not has_landmark:
+                            phone_buttons.append("Add Nearest Landmark")
                         else:
                             phone_buttons.append("Confirm Address")
                         phone_buttons.append("Cancel Order")
@@ -647,14 +647,14 @@ with tab_workstation:
                             btn_text = "📍 'Correct PIN to Match City'"
                             action = "CORRECT_PIN"
                             succ_msg = "Pincode Corrected & Circle Verified! Order Cleared for Label Print."
-                        elif not has_landmark:
-                            btn_text = "🏛️ 'Add Landmark: Near Shiv Mandir'"
-                            action = "CONFIRM_LANDMARK"
-                            succ_msg = "Landmark Added! Order Cleared for Label Print."
                         elif not has_door:
                             btn_text = "🏠 'Add House/Door Number: #14'"
                             action = "CONFIRM_HOUSE"
                             succ_msg = "House Number Added! Order Cleared for Label Print."
+                        elif not has_landmark:
+                            btn_text = "🏛️ 'Add Landmark: Near Shiv Mandir'"
+                            action = "CONFIRM_LANDMARK"
+                            succ_msg = "Landmark Added! Order Cleared for Label Print."
                         else:
                             btn_text = "✓ 'Confirm Current Address'"
                             action = "CONFIRM"

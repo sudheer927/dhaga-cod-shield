@@ -253,11 +253,21 @@ def mock_parse_address(raw_address: str, customer_name: Optional[str] = None) ->
             detected_state = st
             break
             
-    # Extract Landmark keywords
+    # Extract Landmark keywords (Supports both Hindi/Hinglish suffix and English prefix syntax)
     landmark = None
-    lm_match = re.search(r"(?:ke\s*(?:samne|peeche|bagal\s*me|pass)|near|behind|opposite)\s+([^,]+)", raw_address, re.IGNORECASE)
-    if lm_match:
-        landmark = lm_match.group(0).strip()
+    # 1. Hindi suffix landmarks: "Dr. Verma clinic ke samne", "post office ke pass", "shankar talkies ke peeche"
+    m_hindi = re.search(r"([^,]+?\s+ke\s+(?:samne|peeche|bagal\s*me|pass|paas))\b", raw_address, re.IGNORECASE)
+    # 2. English prefix landmarks: "Near Railway Station", "Behind Cult Fitness", "Opposite City Hospital"
+    m_eng = re.search(r"\b(?:near|behind|opposite|adj\s*to)\s+([^,]+)", raw_address, re.IGNORECASE)
+    # 3. Famous Landmark Nouns: "shiv mandir road", "hanuman mandir", "railway station"
+    m_noun = re.search(r"([^,]+?\s+(?:mandir|masjid|gurudwara|hospital|school|college|station|market|bazaar|chowk|circle))\b", raw_address, re.IGNORECASE)
+
+    if m_hindi:
+        landmark = m_hindi.group(1).strip()
+    elif m_eng:
+        landmark = m_eng.group(0).strip()
+    elif m_noun:
+        landmark = m_noun.group(1).strip()
 
     # Extract House / Premise
     premise = None

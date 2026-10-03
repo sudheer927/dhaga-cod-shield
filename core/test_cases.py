@@ -63,14 +63,14 @@ REAL_SHAPED_TEST_CASES: List[Dict[str, Any]] = [
     },
     {
         "id": "DHAGA-1006",
-        "category": "Tier-3 Rural Hamlet",
-        "title": "Village Panchayat Shop Order (Rural Cluster)",
+        "category": "Tier-3 Rural (Missing Landmark)",
+        "title": "Village Shop Order (Lacks Prominent Landmark)",
         "order_value": 840.0,
         "customer_name": "Kavita Kumari",
         "phone": "9771567890",
-        "raw_address": "Panchayat bhavan ke bagal me, sharma kirana dukan no 3, gao pipra khem, Gopalganj, Bihar 841428",
-        "expected_tier": "LOW",
-        "description": "Rural tier-3 order with unambiguous shop and panchayat landmark. Safe to route to Ekart/Delhivery rural hub."
+        "raw_address": "sharma kirana dukan no 3, gao pipra khem, Gopalganj, Bihar 841428",
+        "expected_tier": "MEDIUM",
+        "description": "Rural tier-3 order with shop number but lacks prominent village landmark. Held for WhatsApp to confirm nearest landmark before courier dispatch."
     },
     {
         "id": "DHAGA-1007",

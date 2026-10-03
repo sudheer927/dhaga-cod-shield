@@ -120,7 +120,7 @@ def check_and_apply_migrations() -> None:
     row = cursor.fetchone()
     current_ver = row[0] if (row and row[0] is not None) else 0
 
-    TARGET_VERSION = 3  # v3: Suresh Choudhary HELD_WHATSAPP + dynamic WhatsApp quick replies
+    TARGET_VERSION = 4  # v4: Full Hindi suffix landmark parsing + Anita Devi door missing alignment
     if current_ver < TARGET_VERSION:
         seed_default_orders(force_reset=True)
         cursor.execute("INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (?, ?)", 
