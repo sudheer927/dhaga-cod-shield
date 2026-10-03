@@ -12,8 +12,6 @@ import requests
 from typing import Dict, Any, Optional, Tuple
 
 from core.config import (
-    FAST_WORKER_MODEL,
-    JUDGMENT_EVAL_MODEL,
     EXTRACTION_TEMPERATURE,
     EVALUATION_TEMPERATURE,
     LOGISTICS_COST_PER_RTO_INR,
@@ -26,79 +24,125 @@ from core.schemas import (
     WhatsAppIntervention,
     DispatchDecision,
 )
-from core.deterministic import run_deterministic_checks, validate_pincode_format
+from core.deterministic import run_deterministic_checks
 
 
-# --- LLM API Client (google-genai SDK + direct REST fallback) ---
+# --- API Health & Diagnostic Helper ---
+
+def test_api_connection(api_key: str, provider: str = "gemini") -> Tuple[bool, str]:
+    """Test API key validity and report exact provider response."""
+    clean_key = api_key.strip() if api_key else ""
+    if not clean_key:
+        return False, "No API key provided. Operating in Offline Demo Mode."
+
+    # Auto-detect OpenAI key pasted in Gemini field
+    if clean_key.startswith("sk-"):
+        provider = "openai"
+
+    if provider == "gemini":
+        # Test Gemini generateContent with 1 token
+        models_to_test = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
+        for m in models_to_test:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={clean_key}"
+            headers = {
+                "Content-Type": "application/json",
+                "x-goog-api-key": clean_key,
+            }
+            payload = {
+                "contents": [{"parts": [{"text": "ping"}]}],
+                "generationConfig": {"maxOutputTokens": 2}
+            }
+            try:
+                r = requests.post(url, headers=headers, json=payload, timeout=8)
+                if r.status_code == 200:
+                    return True, f"Connected to Google Gemini ({m}) successfully!"
+                elif r.status_code == 400:
+                    try:
+                        msg = r.json().get("error", {}).get("message", r.text)
+                    except Exception:
+                        msg = r.text
+                    return False, f"Gemini Error (400): {msg}"
+                elif r.status_code == 403:
+                    return False, "Gemini Error (403): API key forbidden or expired. Verify key at aistudio.google.com"
+                elif r.status_code == 429:
+                    return False, "Gemini Error (429): Quota or rate limit exceeded on this API key."
+            except Exception as e:
+                return False, f"Network Error: {str(e)}"
+        return False, "Gemini Error: Unable to reach models (404/400). Please check your Google AI Studio key."
+
+    elif provider == "openai":
+        url = "https://api.openai.com/v1/chat/completions"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {clean_key}"
+        }
+        payload = {
+            "model": "gpt-4o-mini",
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 2
+        }
+        try:
+            r = requests.post(url, headers=headers, json=payload, timeout=8)
+            if r.status_code == 200:
+                return True, "Connected to OpenAI (gpt-4o-mini) successfully!"
+            else:
+                try:
+                    msg = r.json().get("error", {}).get("message", r.text)
+                except Exception:
+                    msg = r.text
+                return False, f"OpenAI Error ({r.status_code}): {msg}"
+        except Exception as e:
+            return False, f"Network Error: {str(e)}"
+
+    return True, "Offline Mode"
+
+
+# --- LLM API Client Implementation ---
 
 def call_gemini_api(prompt: str, model: str, temperature: float, api_key: str, json_mode: bool = True) -> str:
-    """Call Google Gemini using google-genai SDK with REST fallback."""
+    """Call Google Gemini using REST API with dual header & query param auth."""
     clean_key = api_key.strip()
     
-    # 1. Try modern google-genai SDK first
-    try:
-        from google import genai
-        from google.genai import types
-        client = genai.Client(api_key=clean_key)
-        
-        # Test candidate models in order of capability/availability
-        candidate_models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"]
-        if "pro" in model.lower():
-            candidate_models = ["gemini-1.5-pro", "gemini-2.5-pro", "gemini-2.0-flash"]
-        elif model in candidate_models:
-            candidate_models.remove(model)
-            candidate_models.insert(0, model)
-
-        for m in candidate_models:
-            try:
-                config = types.GenerateContentConfig(
-                    temperature=temperature,
-                    response_mime_type="application/json" if json_mode else "text/plain",
-                )
-                response = client.models.generate_content(
-                    model=m,
-                    contents=prompt,
-                    config=config,
-                )
-                if response and response.text:
-                    return response.text
-            except Exception:
-                continue
-    except Exception:
-        pass
-
-    # 2. REST Fallback with header-based auth (avoids URL key encoding issues)
-    candidate_rest_models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"]
+    # Priority list of models (gemini-1.5-flash first as it has 100% universal support)
+    candidate_models = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
     if "pro" in model.lower():
-        candidate_rest_models = ["gemini-1.5-pro", "gemini-2.5-pro", "gemini-2.0-flash"]
+        candidate_models = ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-2.0-flash"]
 
-    last_error = None
-    for m in candidate_rest_models:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent"
+    last_error = ""
+    for m in candidate_models:
+        # Both ?key= and x-goog-api-key header for maximum Google Cloud gateway compatibility
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={clean_key}"
         headers = {
             "Content-Type": "application/json",
             "x-goog-api-key": clean_key,
         }
-        payload = {
+        payload: Dict[str, Any] = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
                 "temperature": temperature,
-                "responseMimeType": "application/json" if json_mode else "text/plain",
+                "maxOutputTokens": 1024,
             }
         }
+        if json_mode:
+            payload["generationConfig"]["responseMimeType"] = "application/json"
+
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=15)
+            resp = requests.post(url, headers=headers, json=payload, timeout=18)
             if resp.status_code == 200:
                 data = resp.json()
                 candidates = data.get("candidates", [])
                 if candidates:
                     return candidates[0]["content"]["parts"][0]["text"]
             else:
-                last_error = f"{resp.status_code}: {resp.text[:120]}"
+                try:
+                    err_data = resp.json()
+                    last_error = err_data.get("error", {}).get("message", resp.text)
+                except Exception:
+                    last_error = f"HTTP {resp.status_code}: {resp.text[:100]}"
         except Exception as ex:
             last_error = str(ex)
 
-    raise ValueError(f"Gemini API request failed. Last error: {last_error or 'Unknown error'}")
+    raise ValueError(f"Gemini API Error: {last_error or 'Could not complete request'}")
 
 
 def call_openai_api(prompt: str, model: str, temperature: float, api_key: str, json_mode: bool = True) -> str:
@@ -187,8 +231,13 @@ def step_1_parse_address(
     provider: str = "gemini"
 ) -> Tuple[ParsedAddress, str]:
     """Pattern 1 - Chain Step 1: Fast Model (Low Cost, High Throughput) Address Extraction."""
-    if not api_key or not api_key.strip():
+    clean_key = api_key.strip() if api_key else ""
+    if not clean_key:
         return mock_parse_address(raw_address, customer_name), "Deterministic Mock Engine (Offline Mode)"
+
+    # Auto-detect OpenAI key format
+    if clean_key.startswith("sk-"):
+        provider = "openai"
 
     prompt = f"""
 You are the address parser for Dhaga & Co., an Indian D2C fashion ecommerce brand.
@@ -215,25 +264,18 @@ Return ONLY a valid JSON object matching this schema:
 }}
 """
     try:
-        if provider == "gemini":
-            raw_json = call_gemini_api(prompt, FAST_WORKER_MODEL, EXTRACTION_TEMPERATURE, api_key, json_mode=True)
-            model_used = "Gemini 1.5/2.5 Flash"
+        if provider == "openai":
+            raw_json = call_openai_api(prompt, "gpt-4o-mini", EXTRACTION_TEMPERATURE, clean_key, json_mode=True)
+            model_used = "OpenAI GPT-4o Mini"
         else:
-            raw_json = call_openai_api(prompt, "gpt-4o-mini", EXTRACTION_TEMPERATURE, api_key, json_mode=True)
-            model_used = "GPT-4o Mini"
+            raw_json = call_gemini_api(prompt, "gemini-1.5-flash", EXTRACTION_TEMPERATURE, clean_key, json_mode=True)
+            model_used = "Gemini 1.5 Flash"
             
         data = json.loads(raw_json)
         return ParsedAddress(**data), model_used
     except Exception as e:
-        # Graceful fallback to mock on API error with clear diagnostic note
         err_msg = str(e)
-        if "403" in err_msg or "API key not valid" in err_msg:
-            status_desc = "API Key Invalid / Unregistered"
-        elif "429" in err_msg or "quota" in err_msg.lower():
-            status_desc = "Rate Limit / Quota Exceeded"
-        else:
-            status_desc = f"API Error: {err_msg[:45]}"
-        return mock_parse_address(raw_address, customer_name), f"Mock Engine ({status_desc})"
+        return mock_parse_address(raw_address, customer_name), f"Mock Engine ({err_msg[:60]})"
 
 
 # --- Pattern 1: Prompt Chaining (Stage 2: RTO Risk Scorer) ---
@@ -314,8 +356,8 @@ def step_3_optimize_whatsapp_intervention(
     provider: str = "gemini"
 ) -> Tuple[WhatsAppIntervention, Optional[str]]:
     """Pattern 2: Evaluator-Optimizer. Generates an empathetic, high-conversion WhatsApp message."""
+    clean_key = api_key.strip() if api_key else ""
     
-    # Missing fields to highlight
     missing = []
     if not deterministic.has_door_or_building_number:
         missing.append("House / Flat Number")
@@ -325,7 +367,7 @@ def step_3_optimize_whatsapp_intervention(
         missing.append("Correct 6-digit Pincode for your location")
 
     # If no API key, provide pre-optimized template
-    if not api_key or not api_key.strip():
+    if not clean_key:
         msg = (
             f"Namaste {parsed.recipient_name or 'ji'}! 🙏 Dhaga & Co. se aapka ₹{840} ka order dispatch hone wala hai. "
             f"Lekin delivery partner ko aapka address dhoondhne me dikkat na ho, iske liye kripya apna "
@@ -336,6 +378,9 @@ def step_3_optimize_whatsapp_intervention(
             missing_fields_highlighted=missing,
             quick_reply_suggestions=["Confirm Location on Map", "Update House Number", "Cancel Order"]
         ), None
+
+    if clean_key.startswith("sk-"):
+        provider = "openai"
 
     prompt = f"""
 You are the customer empathy optimizer for Dhaga & Co., a popular everyday clothing brand in India.
@@ -357,12 +402,12 @@ Return ONLY a JSON object:
 }}
 """
     try:
-        if provider == "gemini":
-            raw_json = call_gemini_api(prompt, JUDGMENT_EVAL_MODEL, EVALUATION_TEMPERATURE, api_key, json_mode=True)
-            model_used = "Gemini 1.5/2.5 Pro"
+        if provider == "openai":
+            raw_json = call_openai_api(prompt, "gpt-4o", EVALUATION_TEMPERATURE, clean_key, json_mode=True)
+            model_used = "OpenAI GPT-4o"
         else:
-            raw_json = call_openai_api(prompt, "gpt-4o", EVALUATION_TEMPERATURE, api_key, json_mode=True)
-            model_used = "GPT-4o"
+            raw_json = call_gemini_api(prompt, "gemini-1.5-pro", EVALUATION_TEMPERATURE, clean_key, json_mode=True)
+            model_used = "Gemini 1.5 Pro"
         data = json.loads(raw_json)
         return WhatsAppIntervention(**data), model_used
     except Exception:
@@ -389,9 +434,10 @@ def process_dhaga_order(
     Executes Prompt Chaining, Deterministic Checks, Routing, and Evaluator-Optimizer.
     """
     start_time = time.time()
+    clean_key = api_key.strip() if api_key else ""
     
     # 1. Chain Step 1: Address Parsing (Fast Model)
-    parsed_address, fast_model_name = step_1_parse_address(raw_address, customer_name, api_key, provider)
+    parsed_address, fast_model_name = step_1_parse_address(raw_address, customer_name, clean_key, provider)
     
     # 2. Deterministic Validation (0 Tokens, Python Pure)
     deterministic_checks = run_deterministic_checks(
@@ -407,7 +453,7 @@ def process_dhaga_order(
         parsed=parsed_address,
         deterministic=deterministic_checks,
         order_value=order_value,
-        api_key=api_key,
+        api_key=clean_key,
         provider=provider
     )
 
@@ -441,7 +487,7 @@ def process_dhaga_order(
             deterministic=deterministic_checks,
             risk=rto_assessment,
             order_id=order_id,
-            api_key=api_key,
+            api_key=clean_key,
             provider=provider
         )
         prevented_loss = LOGISTICS_COST_PER_RTO_INR
@@ -454,7 +500,7 @@ def process_dhaga_order(
             deterministic=deterministic_checks,
             risk=rto_assessment,
             order_id=order_id,
-            api_key=api_key,
+            api_key=clean_key,
             provider=provider
         )
     else:

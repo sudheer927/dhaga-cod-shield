@@ -245,6 +245,17 @@ with st.sidebar:
         provider = "mock"
         api_key_input = ""
 
+    if api_key_input:
+        from core.pipeline import test_api_connection
+        if st.button("🔍 Test API Key Connection", use_container_width=True):
+            with st.spinner("Testing API key..."):
+                ok, diag_msg = test_api_connection(api_key_input, provider)
+                if ok:
+                    st.success(f"✅ {diag_msg}")
+                else:
+                    st.error(f"❌ {diag_msg}")
+
+
     st.markdown("---")
     st.markdown("#### 👥 Group 10 Team")
     st.markdown("""
