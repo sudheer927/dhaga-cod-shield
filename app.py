@@ -273,6 +273,38 @@ st.markdown("""
         font-weight: 700;
         color: #1e293b;
     }
+
+    /* Seamless Clickable Order Card Buttons */
+    .queue-cards-container div[data-testid="stButton"] button {
+        text-align: left !important;
+        display: block !important;
+        width: 100% !important;
+        padding: 12px 14px !important;
+        border-radius: 10px !important;
+        font-size: 0.82rem !important;
+        line-height: 1.45 !important;
+        white-space: pre-wrap !important;
+        word-break: break-word !important;
+        margin-bottom: 8px !important;
+        transition: all 0.15s ease-in-out !important;
+    }
+    .queue-cards-container div[data-testid="stButton"] button[kind="secondary"] {
+        background: #ffffff !important;
+        border: 1px solid #e2e8f0 !important;
+        color: #1e293b !important;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.02) !important;
+    }
+    .queue-cards-container div[data-testid="stButton"] button[kind="secondary"]:hover {
+        border-color: #3b82f6 !important;
+        background: #f8fafc !important;
+        box-shadow: 0 4px 10px -2px rgba(0, 0, 0, 0.06) !important;
+    }
+    .queue-cards-container div[data-testid="stButton"] button[kind="primary"] {
+        background: #eff6ff !important;
+        border: 2px solid #2563eb !important;
+        color: #0f172a !important;
+        box-shadow: 0 4px 14px -2px rgba(37, 99, 235, 0.22) !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -409,46 +441,37 @@ with tab_workstation:
         if not order_list:
             st.info("No orders currently in this queue view.")
         else:
+            st.markdown('<div class="queue-cards-container">', unsafe_allow_html=True)
             for ord_row in order_list:
                 oid = ord_row["order_id"]
                 is_selected = (oid == st.session_state.selected_order_id)
-                card_class = "order-card order-card-selected" if is_selected else "order-card"
                 
-                # Pill style
                 st_code = ord_row["status"]
-                pill_class = "status-pill-held"
-                pill_label = "🟡 HELD FOR WHATSAPP"
-                if st_code == "AUTO_APPROVED":
-                    pill_class = "status-pill-approved"
-                    pill_label = "🟢 AUTO-APPROVED"
-                elif st_code == "BLOCKED_FRAUD":
-                    pill_class = "status-pill-blocked"
-                    pill_label = "🔴 BLOCKED FRAUD"
-                elif st_code == "DISPATCHED":
-                    pill_class = "status-pill-dispatched"
-                    pill_label = "📦 DISPATCHED"
-                elif st_code == "CANCELLED_RESTOCKED":
-                    pill_class = "status-pill-cancelled"
-                    pill_label = "✕ CANCELLED"
+                pill_label = {
+                    "AUTO_APPROVED": "🟢 AUTO-APPROVED",
+                    "HELD_WHATSAPP": "🟡 HELD FOR WHATSAPP",
+                    "BLOCKED_FRAUD": "🔴 BLOCKED FRAUD",
+                    "DISPATCHED": "📦 DISPATCHED",
+                    "CANCELLED_RESTOCKED": "✕ CANCELLED"
+                }.get(st_code, st_code)
 
-                # Render Card
-                st.markdown(f"""
-                <div class="{card_class}">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <span style="font-family:'JetBrains Mono'; font-weight:700; font-size:0.85rem; color:#0f172a;">#{oid}</span>
-                        <span class="status-pill {pill_class}">{pill_label}</span>
-                    </div>
-                    <div style="font-weight:700; font-size:0.9rem; color:#1e293b; margin-top:4px;">{ord_row['customer_name']}</div>
-                    <div style="font-size:0.78rem; color:#64748b; margin-top:2px;">{ord_row['origin_fc']} · ₹{ord_row['order_value']:.0f} COD · Risk: {ord_row['risk_score']}/100</div>
-                    <div style="font-size:0.75rem; color:#475569; margin-top:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-                        {ord_row['raw_address'][:55]}...
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+                # Clean 3-line card label (the card itself IS the button!)
+                card_label = (
+                    f"#{oid} · {ord_row['customer_name']} (₹{ord_row['order_value']:.0f} COD)\n"
+                    f"{pill_label}  •  Risk: {ord_row['risk_score']}/100\n"
+                    f"📍 {ord_row['origin_fc']} · {ord_row['raw_address'][:45]}..."
+                )
 
-                if st.button(f"👉 Select #{oid}", key=f"sel_btn_{oid}", use_container_width=True):
+                if st.button(
+                    card_label,
+                    key=f"card_{oid}",
+                    use_container_width=True,
+                    type="primary" if is_selected else "secondary"
+                ):
                     st.session_state.selected_order_id = oid
                     st.rerun()
+
+            st.markdown('</div>', unsafe_allow_html=True)
 
     # --------------------------------------------------------------------------
     # RIGHT PANE: Live Order Action Console (Stays in View!)
@@ -504,11 +527,36 @@ with tab_workstation:
                 if lbl:
                     st.code(lbl["normalized_address"], language="text")
 
-                    # Verification Checklist Pills
-                    st.markdown("""
-                    <div style="margin-top:8px; margin-bottom:8px;">
-                        <span class="verify-pill verify-pass">✓ PIN 6-Digit Valid</span>
-                        <span class="verify-pill verify-pass">✓ Postal Circle Matched</span>
+                    # Dynamic Verification Checklist Pills (Reflects REAL database state)
+                    pin_valid = bool(lbl.get("pincode_valid", 1))
+                    circle_match = bool(lbl.get("circle_matched", 1))
+                    has_door = bool(lbl.get("premise"))
+                    has_landmark = bool(lbl.get("landmark"))
+
+                    pills_html = []
+                    if pin_valid:
+                        pills_html.append('<span class="verify-pill verify-pass">✓ PIN Format Valid</span>')
+                    else:
+                        pills_html.append('<span class="verify-pill verify-fail">✗ Invalid PIN Format</span>')
+
+                    if circle_match:
+                        pills_html.append('<span class="verify-pill verify-pass">✓ Postal Circle Matched</span>')
+                    else:
+                        pills_html.append('<span class="verify-pill verify-fail">✗ Postal Circle Mismatch</span>')
+
+                    if has_door:
+                        pills_html.append('<span class="verify-pill verify-pass">✓ Premise / Door Found</span>')
+                    else:
+                        pills_html.append('<span class="verify-pill verify-warn">⚠️ Door Number Missing</span>')
+
+                    if has_landmark:
+                        pills_html.append('<span class="verify-pill verify-pass">✓ Landmark Verified</span>')
+                    else:
+                        pills_html.append('<span class="verify-pill verify-warn">⚠️ No Landmark</span>')
+
+                    st.markdown(f"""
+                    <div style="margin-top:6px; margin-bottom:8px;">
+                        {' '.join(pills_html)}
                     </div>
                     """, unsafe_allow_html=True)
 
@@ -518,7 +566,7 @@ with tab_workstation:
                         <tr style="border-bottom:1px solid #f1f5f9;"><td style="color:#64748b; padding:4px 0;">Street / Gali:</td><td style="font-weight:600; text-align:right;">{lbl['street'] or '❌ Unspecified'}</td></tr>
                         <tr style="border-bottom:1px solid #f1f5f9;"><td style="color:#64748b; padding:4px 0;">Landmark:</td><td style="font-weight:600; text-align:right;">{lbl['landmark'] or '❌ None'}</td></tr>
                         <tr style="border-bottom:1px solid #f1f5f9;"><td style="color:#64748b; padding:4px 0;">City / State:</td><td style="font-weight:600; text-align:right;">{lbl['city']}, {lbl['state']}</td></tr>
-                        <tr><td style="color:#64748b; padding:4px 0;">Postal PIN:</td><td style="font-weight:700; color:#2563eb; text-align:right;">{lbl['pincode']}</td></tr>
+                        <tr><td style="color:#64748b; padding:4px 0;">Postal PIN:</td><td style="font-weight:700; color:{'#2563eb' if circle_match else '#dc2626'}; text-align:right;">{lbl['pincode']}</td></tr>
                     </table>
                     """, unsafe_allow_html=True)
                 else:
@@ -583,28 +631,75 @@ with tab_workstation:
                             st.rerun()
 
                 elif st_code in ("DISPATCHED", "AUTO_APPROVED"):
-                    st.success("✅ **Order Cleared for Fulfillment.** Courier shipping label printed and parcel queued for Ekart carrier pickup.")
+                    st.markdown("""
+                    <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:14px; color:#15803d; font-size:0.84rem; margin-bottom:12px;">
+                        ✅ <b>Order Cleared for Fulfillment</b><br/>
+                        <span style="font-size:0.78rem; color:#166534;">Courier shipping label printed and parcel queued for Ekart carrier pickup.</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+
                 elif st_code == "BLOCKED_FRAUD":
-                    st.error("🚨 **Dispatch Halted Pre-Courier.** Bogus/mismatched postal PIN intercepted. Saved ₹120 reverse freight burn.")
+                    st.markdown("""
+                    <div style="background:#fef2f2; border:1px solid #fecaca; border-radius:10px; padding:14px; color:#991b1b; font-size:0.84rem; margin-bottom:12px;">
+                        🚨 <b>Dispatch Halted Pre-Courier</b><br/>
+                        <span style="font-size:0.78rem; color:#b91c1c;">Bogus/mismatched postal PIN intercepted. Saved ₹120 dead reverse freight burn.</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+
                 elif st_code == "CANCELLED_RESTOCKED":
-                    st.info("✕ **Order Cancelled.** Garment returned to active inventory. Saved ₹120 dead freight.")
+                    st.markdown("""
+                    <div style="background:#f1f5f9; border:1px solid #cbd5e1; border-radius:10px; padding:14px; color:#334155; font-size:0.84rem; margin-bottom:12px;">
+                        ✕ <b>Order Cancelled & Inventory Restocked</b><br/>
+                        <span style="font-size:0.78rem; color:#64748b;">This COD shipment was stopped pre-dispatch. Saved ₹120 in courier reverse freight. Garment returned to active stock.</span>
+                    </div>
+                    """, unsafe_allow_html=True)
 
-                # Warehouse Supervisor 1-Click Overrides
-                st.markdown("###### 🛡️ Supervisor 1-Click Action Bar")
-                st.caption("Manual operator intervention (updates SQLite database immediately):")
-                
-                op1, op2 = st.columns(2)
-                with op1:
-                    if st.button("✓ Force Generate Label", key=f"force_btn_{active_id}", use_container_width=True):
-                        update_order_status(active_id, "DISPATCHED", "BHIWANDI_OPS_MANAGER", "Operator verified delivery point manually")
-                        st.success("Updated in SQLite DB: Label Generated!")
+                # Supervisor Action Bar (Strictly Context-Aware based on Order Status)
+                st.markdown("###### 🛡️ Supervisor Action Bar")
+
+                if st_code == "CANCELLED_RESTOCKED":
+                    st.markdown("""
+                    <div style="background:#f8fafc; border:1px dashed #cbd5e1; border-radius:8px; padding:10px; text-align:center; color:#64748b; font-size:0.8rem; margin-bottom:8px;">
+                        🔒 <b>Terminal State: Order is closed.</b> No further dispatch action needed.
+                    </div>
+                    """, unsafe_allow_html=True)
+                    if st.button("🔁 Restore Order to Active Queue", key=f"restore_{active_id}", use_container_width=True):
+                        update_order_status(active_id, "HELD_WHATSAPP", "OPS_SUPERVISOR", "Restored order to active queue for re-verification")
+                        st.info("Order restored to active queue!")
                         st.rerun()
 
-                with op2:
-                    if st.button("✕ Cancel & Restock", key=f"cancel_btn_{active_id}", use_container_width=True):
-                        update_order_status(active_id, "CANCELLED_RESTOCKED", "BHIWANDI_OPS_MANAGER", "Saved ₹120 dead courier pickup")
-                        st.warning("Cancelled in SQLite DB: Saved ₹120 Freight!")
+                elif st_code in ("DISPATCHED", "AUTO_APPROVED"):
+                    st.caption("Active label in carrier run sheet. Actions:")
+                    if st.button("🛑 Void Label & Put on Hold", key=f"void_{active_id}", use_container_width=True):
+                        update_order_status(active_id, "HELD_WHATSAPP", "OPS_SUPERVISOR", "Voided shipping label prior to carrier pickup")
+                        st.warning("Label voided! Order placed back on hold.")
                         st.rerun()
+
+                elif st_code == "BLOCKED_FRAUD":
+                    st.caption("Fraud interception active. Choose resolution:")
+                    b1, b2 = st.columns(2)
+                    with b1:
+                        if st.button("✕ Confirm Cancel & Restock", key=f"confirm_canc_{active_id}", use_container_width=True):
+                            update_order_status(active_id, "CANCELLED_RESTOCKED", "OPS_SUPERVISOR", "Confirmed fake PIN cancellation. Saved ₹120.")
+                            st.rerun()
+                    with b2:
+                        if st.button("✓ Force Override Dispatch", key=f"force_fraud_{active_id}", use_container_width=True):
+                            update_order_status(active_id, "DISPATCHED", "OPS_SUPERVISOR", "Supervisor manually overrode circle mismatch")
+                            st.rerun()
+
+                elif st_code == "HELD_WHATSAPP":
+                    st.caption("Manual operator intervention (updates SQLite database immediately):")
+                    op1, op2 = st.columns(2)
+                    with op1:
+                        if st.button("✓ Force Generate Label", key=f"force_btn_{active_id}", use_container_width=True):
+                            update_order_status(active_id, "DISPATCHED", "BHIWANDI_OPS_MANAGER", "Operator verified delivery point manually")
+                            st.success("Updated in SQLite DB: Label Generated!")
+                            st.rerun()
+                    with op2:
+                        if st.button("✕ Cancel & Restock", key=f"cancel_btn_{active_id}", use_container_width=True):
+                            update_order_status(active_id, "CANCELLED_RESTOCKED", "BHIWANDI_OPS_MANAGER", "Saved ₹120 dead courier pickup")
+                            st.warning("Cancelled in SQLite DB: Saved ₹120 Freight!")
+                            st.rerun()
 
 
 # ==============================================================================
