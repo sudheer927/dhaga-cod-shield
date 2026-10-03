@@ -27,7 +27,41 @@ from core.schemas import (
 from core.deterministic import run_deterministic_checks
 
 
-# --- API Health & Diagnostic Helper ---
+# --- API Health, Key Resolution & Diagnostic Helper ---
+
+def resolve_api_key(api_key: Optional[str] = None) -> Tuple[str, str]:
+    """Resolve API key and provider from explicit argument, Streamlit secrets, or environment."""
+    key = (api_key or "").strip()
+    if not key:
+        try:
+            import streamlit as st
+            if "GEMINI_API_KEY" in st.secrets:
+                key = str(st.secrets["GEMINI_API_KEY"]).strip()
+            elif "OPENAI_API_KEY" in st.secrets:
+                key = str(st.secrets["OPENAI_API_KEY"]).strip()
+        except Exception:
+            pass
+
+    if not key:
+        key = (os.environ.get("GEMINI_API_KEY") or os.environ.get("OPENAI_API_KEY") or "").strip()
+
+    provider = "openai" if key.startswith("sk-") else "gemini"
+    return key, provider
+
+
+def extract_and_parse_json(text: str) -> Dict[str, Any]:
+    """Robustly parse JSON from LLM output, stripping markdown code fences or conversational text."""
+    clean_text = text.strip()
+    if "```" in clean_text:
+        import re
+        match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", clean_text, re.DOTALL)
+        if match:
+            clean_text = match.group(1).strip()
+        else:
+            clean_text = re.sub(r"^```(?:json)?\s*", "", clean_text, flags=re.MULTILINE)
+            clean_text = re.sub(r"\s*```$", "", clean_text, flags=re.MULTILINE).strip()
+    return json.loads(clean_text)
+
 
 def test_api_connection(api_key: str, provider: str = "gemini") -> Tuple[bool, str]:
     """Test API key validity and report exact provider response."""
@@ -41,12 +75,11 @@ def test_api_connection(api_key: str, provider: str = "gemini") -> Tuple[bool, s
 
     if provider == "gemini":
         models_to_test = [
-            "gemini-flash-lite-latest",
-            "gemini-3.5-flash-lite",
-            "gemini-3.6-flash",
             "gemini-flash-latest",
-            "gemini-3.7-flash",
-            "gemini-3.8-flash",
+            "gemini-2.5-flash",
+            "gemini-2.0-flash",
+            "gemini-1.5-flash",
+            "gemini-1.5-pro",
         ]
         last_err = ""
         for m in models_to_test:
@@ -117,12 +150,11 @@ def call_gemini_api(prompt: str, model: str, temperature: float, api_key: str, j
     # Priority cascade: fast models first, followed by resilient fallbacks
     candidate_models = [
         model,
-        "gemini-flash-lite-latest",
-        "gemini-3.5-flash-lite",
-        "gemini-3.6-flash",
         "gemini-flash-latest",
-        "gemini-3.7-flash",
-        "gemini-3.8-flash",
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
     ]
     
     # Deduplicate while preserving order
@@ -156,7 +188,9 @@ def call_gemini_api(prompt: str, model: str, temperature: float, api_key: str, j
                 data = resp.json()
                 candidates = data.get("candidates", [])
                 if candidates:
-                    return candidates[0]["content"]["parts"][0]["text"]
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    if parts and "text" in parts[0]:
+                        return parts[0]["text"]
             elif resp.status_code in (503, 429):
                 # 503 capacity spike or 429 quota -> seamlessly try next candidate model
                 try:
@@ -303,7 +337,7 @@ Return ONLY a valid JSON object matching this schema:
             raw_json = call_gemini_api(prompt, "gemini-1.5-flash", EXTRACTION_TEMPERATURE, clean_key, json_mode=True)
             model_used = "Gemini 1.5 Flash"
             
-        data = json.loads(raw_json)
+        data = extract_and_parse_json(raw_json)
         return ParsedAddress(**data), model_used
     except Exception as e:
         err_msg = str(e)
@@ -460,7 +494,7 @@ Return ONLY a JSON object:
         else:
             raw_json = call_gemini_api(prompt, "gemini-1.5-pro", EVALUATION_TEMPERATURE, clean_key, json_mode=True)
             model_used = "Gemini 1.5 Pro"
-        data = json.loads(raw_json)
+        data = extract_and_parse_json(raw_json)
         return WhatsAppIntervention(**data), model_used
     except Exception:
         msg = f"Namaste {parsed.recipient_name or 'ji'}! Dhaga & Co. order #{order_id} ({val_str}) dispatch karne ke liye kripya apna address confirm kijiye."
@@ -486,7 +520,9 @@ def process_dhaga_order(
     Executes Prompt Chaining, Deterministic Checks, Routing, and Evaluator-Optimizer.
     """
     start_time = time.time()
-    clean_key = api_key.strip() if api_key else ""
+    clean_key, detected_provider = resolve_api_key(api_key)
+    if not api_key and clean_key:
+        provider = detected_provider
     
     # 1. Chain Step 1: Address Parsing (Fast Model)
     parsed_address, fast_model_name = step_1_parse_address(raw_address, customer_name, clean_key, provider)

@@ -32,7 +32,7 @@ from core.db import (
     get_db_metrics,
     DB_PATH
 )
-from core.pipeline import process_dhaga_order, test_api_connection
+from core.pipeline import process_dhaga_order, test_api_connection, resolve_api_key
 from core.test_cases import REAL_SHAPED_TEST_CASES
 
 # Page setup
@@ -433,9 +433,7 @@ with tab_workstation:
                         raw_address=in_addr,
                         customer_name=in_name,
                         order_id=new_order_id,
-                        order_value=in_val,
-                        api_key=None,
-                        provider="gemini"
+                        order_value=in_val
                     )
                     save_new_order_to_db(res, in_addr, in_name, "9876543210", in_fc)
                     st.session_state.selected_order_id = new_order_id
@@ -817,6 +815,30 @@ with tab_gateway:
         st.markdown("##### 💬 WhatsApp Auto-Timeout Policy")
         st.selectbox("Customer Confirmation Timeout Window", ["6 Hours", "12 Hours (Recommended)", "24 Hours"], index=1)
         st.caption("Orders unanswered after 12h appear on the Operations Exception Desk for 1-click resolution.")
+
+        st.markdown("---")
+        st.markdown("##### 🔌 Live AI Model Diagnostics")
+        detected_key, detected_prov = resolve_api_key()
+        if detected_key:
+            masked = detected_key[:4] + "••••" + detected_key[-4:]
+            st.success(f"✓ Detected Active {detected_prov.upper()} Key (`{masked}`)")
+            if st.button("⚡ Test Live Model Connection", key="test_api_btn", use_container_width=True):
+                with st.spinner("Pinging model endpoint..."):
+                    is_ok, msg = test_api_connection(detected_key, detected_prov)
+                    if is_ok:
+                        st.success(msg)
+                    else:
+                        st.error(msg)
+        else:
+            st.info("⚪ Operating in Intelligent Offline Mock Mode (Zero tokens consumed).")
+            manual_key = st.text_input("Test with Custom API Key:", type="password", key="manual_test_key")
+            if manual_key and st.button("⚡ Test Key Connection", key="test_manual_btn", use_container_width=True):
+                with st.spinner("Pinging model endpoint..."):
+                    is_ok, msg = test_api_connection(manual_key)
+                    if is_ok:
+                        st.success(msg)
+                    else:
+                        st.error(msg)
 
         st.markdown("---")
         st.markdown("##### 🔄 Database Maintenance")

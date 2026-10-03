@@ -21,8 +21,8 @@ PROJECTED_WEEKLY_SAVED_ORDERS = int(WEEKLY_COD_ORDERS * TARGET_RTO_REDUCTION_POI
 PROJECTED_WEEKLY_LOGISTICS_SAVINGS_INR = PROJECTED_WEEKLY_SAVED_ORDERS * LOGISTICS_COST_PER_RTO_INR  # ₹1,75,680 / week
 
 # Two models chosen with deliberate split on latency, cost, and judgment:
-FAST_WORKER_MODEL = "gemini-flash-lite-latest"  # Ultra-low latency, rock-solid 200 OK, zero 503 spikes
-JUDGMENT_EVAL_MODEL = "gemini-3.6-flash"         # High-reasoning model for ambiguous edge cases & WhatsApp synthesis
+FAST_WORKER_MODEL = "gemini-flash-latest"  # Ultra-low latency, rock-solid 200 OK
+JUDGMENT_EVAL_MODEL = "gemini-1.5-pro"      # High-reasoning model for ambiguous edge cases & WhatsApp synthesis
 
 
 
