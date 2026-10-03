@@ -29,38 +29,85 @@ from core.schemas import (
 from core.deterministic import run_deterministic_checks, validate_pincode_format
 
 
-# --- LLM API Client (Direct REST via Requests for zero-dependency portability) ---
+# --- LLM API Client (google-genai SDK + direct REST fallback) ---
 
 def call_gemini_api(prompt: str, model: str, temperature: float, api_key: str, json_mode: bool = True) -> str:
-    """Make direct REST call to Google Gemini GenerateContent API."""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-    headers = {"Content-Type": "application/json"}
+    """Call Google Gemini using google-genai SDK with REST fallback."""
+    clean_key = api_key.strip()
     
-    payload: Dict[str, Any] = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": temperature,
-            "maxOutputTokens": 1024,
-        }
-    }
-    if json_mode:
-        payload["generationConfig"]["responseMimeType"] = "application/json"
+    # 1. Try modern google-genai SDK first
+    try:
+        from google import genai
+        from google.genai import types
+        client = genai.Client(api_key=clean_key)
+        
+        # Test candidate models in order of capability/availability
+        candidate_models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"]
+        if "pro" in model.lower():
+            candidate_models = ["gemini-1.5-pro", "gemini-2.5-pro", "gemini-2.0-flash"]
+        elif model in candidate_models:
+            candidate_models.remove(model)
+            candidate_models.insert(0, model)
 
-    response = requests.post(url, headers=headers, json=payload, timeout=20)
-    response.raise_for_status()
-    data = response.json()
-    candidates = data.get("candidates", [])
-    if not candidates:
-        raise ValueError("No response candidate returned from Gemini API.")
-    return candidates[0]["content"]["parts"][0]["text"]
+        for m in candidate_models:
+            try:
+                config = types.GenerateContentConfig(
+                    temperature=temperature,
+                    response_mime_type="application/json" if json_mode else "text/plain",
+                )
+                response = client.models.generate_content(
+                    model=m,
+                    contents=prompt,
+                    config=config,
+                )
+                if response and response.text:
+                    return response.text
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    # 2. REST Fallback with header-based auth (avoids URL key encoding issues)
+    candidate_rest_models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"]
+    if "pro" in model.lower():
+        candidate_rest_models = ["gemini-1.5-pro", "gemini-2.5-pro", "gemini-2.0-flash"]
+
+    last_error = None
+    for m in candidate_rest_models:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent"
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": clean_key,
+        }
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": temperature,
+                "responseMimeType": "application/json" if json_mode else "text/plain",
+            }
+        }
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=15)
+            if resp.status_code == 200:
+                data = resp.json()
+                candidates = data.get("candidates", [])
+                if candidates:
+                    return candidates[0]["content"]["parts"][0]["text"]
+            else:
+                last_error = f"{resp.status_code}: {resp.text[:120]}"
+        except Exception as ex:
+            last_error = str(ex)
+
+    raise ValueError(f"Gemini API request failed. Last error: {last_error or 'Unknown error'}")
 
 
 def call_openai_api(prompt: str, model: str, temperature: float, api_key: str, json_mode: bool = True) -> str:
     """Make direct REST call to OpenAI Chat Completions API."""
+    clean_key = api_key.strip()
     url = "https://api.openai.com/v1/chat/completions"
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
+        "Authorization": f"Bearer {clean_key}"
     }
     payload: Dict[str, Any] = {
         "model": model,
@@ -140,8 +187,8 @@ def step_1_parse_address(
     provider: str = "gemini"
 ) -> Tuple[ParsedAddress, str]:
     """Pattern 1 - Chain Step 1: Fast Model (Low Cost, High Throughput) Address Extraction."""
-    if not api_key:
-        return mock_parse_address(raw_address, customer_name), "Deterministic Mock Engine (No API Key)"
+    if not api_key or not api_key.strip():
+        return mock_parse_address(raw_address, customer_name), "Deterministic Mock Engine (Offline Mode)"
 
     prompt = f"""
 You are the address parser for Dhaga & Co., an Indian D2C fashion ecommerce brand.
@@ -170,16 +217,23 @@ Return ONLY a valid JSON object matching this schema:
     try:
         if provider == "gemini":
             raw_json = call_gemini_api(prompt, FAST_WORKER_MODEL, EXTRACTION_TEMPERATURE, api_key, json_mode=True)
-            model_used = FAST_WORKER_MODEL
+            model_used = "Gemini 1.5/2.5 Flash"
         else:
             raw_json = call_openai_api(prompt, "gpt-4o-mini", EXTRACTION_TEMPERATURE, api_key, json_mode=True)
-            model_used = "gpt-4o-mini"
+            model_used = "GPT-4o Mini"
             
         data = json.loads(raw_json)
         return ParsedAddress(**data), model_used
     except Exception as e:
-        # Graceful fallback to mock on API error
-        return mock_parse_address(raw_address, customer_name), f"Mock Engine (Fallback: {str(e)[:40]})"
+        # Graceful fallback to mock on API error with clear diagnostic note
+        err_msg = str(e)
+        if "403" in err_msg or "API key not valid" in err_msg:
+            status_desc = "API Key Invalid / Unregistered"
+        elif "429" in err_msg or "quota" in err_msg.lower():
+            status_desc = "Rate Limit / Quota Exceeded"
+        else:
+            status_desc = f"API Error: {err_msg[:45]}"
+        return mock_parse_address(raw_address, customer_name), f"Mock Engine ({status_desc})"
 
 
 # --- Pattern 1: Prompt Chaining (Stage 2: RTO Risk Scorer) ---
@@ -271,7 +325,7 @@ def step_3_optimize_whatsapp_intervention(
         missing.append("Correct 6-digit Pincode for your location")
 
     # If no API key, provide pre-optimized template
-    if not api_key:
+    if not api_key or not api_key.strip():
         msg = (
             f"Namaste {parsed.recipient_name or 'ji'}! 🙏 Dhaga & Co. se aapka ₹{840} ka order dispatch hone wala hai. "
             f"Lekin delivery partner ko aapka address dhoondhne me dikkat na ho, iske liye kripya apna "
@@ -305,13 +359,13 @@ Return ONLY a JSON object:
     try:
         if provider == "gemini":
             raw_json = call_gemini_api(prompt, JUDGMENT_EVAL_MODEL, EVALUATION_TEMPERATURE, api_key, json_mode=True)
-            model_used = JUDGMENT_EVAL_MODEL
+            model_used = "Gemini 1.5/2.5 Pro"
         else:
             raw_json = call_openai_api(prompt, "gpt-4o", EVALUATION_TEMPERATURE, api_key, json_mode=True)
-            model_used = "gpt-4o"
+            model_used = "GPT-4o"
         data = json.loads(raw_json)
         return WhatsAppIntervention(**data), model_used
-    except Exception as e:
+    except Exception:
         msg = f"Namaste {parsed.recipient_name or 'ji'}! Dhaga & Co. order #{order_id} dispatch karne ke liye kripya apna address confirm kijiye."
         return WhatsAppIntervention(
             customer_message_hinglish=msg,
