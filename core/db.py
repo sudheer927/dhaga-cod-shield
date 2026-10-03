@@ -91,7 +91,41 @@ def init_db() -> None:
     )
     """)
 
+    # 5. Schema Migration & Version Tracking table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS schema_version (
+        version INTEGER PRIMARY KEY,
+        applied_at TEXT NOT NULL
+    )
+    """)
+
     conn.commit()
+    conn.close()
+
+    # Apply migrations if running on cloud container with stale seed data
+    check_and_apply_migrations()
+
+
+def check_and_apply_migrations() -> None:
+    """Ensure database schema and seed data are up to date across cloud deployments."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS schema_version (
+        version INTEGER PRIMARY KEY,
+        applied_at TEXT NOT NULL
+    )
+    """)
+    cursor.execute("SELECT MAX(version) FROM schema_version")
+    row = cursor.fetchone()
+    current_ver = row[0] if (row and row[0] is not None) else 0
+
+    TARGET_VERSION = 3  # v3: Suresh Choudhary HELD_WHATSAPP + dynamic WhatsApp quick replies
+    if current_ver < TARGET_VERSION:
+        seed_default_orders(force_reset=True)
+        cursor.execute("INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (?, ?)", 
+                       (TARGET_VERSION, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        conn.commit()
     conn.close()
 
 

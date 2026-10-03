@@ -385,30 +385,45 @@ def step_3_optimize_whatsapp_intervention(
     risk: RTORiskAssessment,
     order_id: str,
     api_key: Optional[str] = None,
-    provider: str = "gemini"
+    provider: str = "gemini",
+    order_value: float = 840.0
 ) -> Tuple[WhatsAppIntervention, Optional[str]]:
     """Pattern 2: Evaluator-Optimizer. Generates an empathetic, high-conversion WhatsApp message."""
     clean_key = api_key.strip() if api_key else ""
     
     missing = []
+    if not deterministic.pincode_zone_verified:
+        missing.append("Correct 6-digit Pincode for your location")
     if not deterministic.has_door_or_building_number:
         missing.append("House / Flat Number")
     if not parsed.landmark:
         missing.append("Nearest Famous Landmark (mandir, school, shop)")
+
+    # Generate dynamic quick replies tailored specifically to missing elements
+    quick_replies = ["Confirm Location on Map"]
     if not deterministic.pincode_zone_verified:
-        missing.append("Correct 6-digit Pincode for your location")
+        quick_replies.append("Correct Pincode")
+    elif not deterministic.has_door_or_building_number:
+        quick_replies.append("Update House Number")
+    elif not parsed.landmark:
+        quick_replies.append("Add Nearest Landmark")
+    else:
+        quick_replies.append("Confirm Address Details")
+    quick_replies.append("Cancel Order")
+
+    val_str = f"₹{int(order_value)}" if order_value else "₹840"
 
     # If no API key, provide pre-optimized template
     if not clean_key:
         msg = (
-            f"Namaste {parsed.recipient_name or 'ji'}! 🙏 Dhaga & Co. se aapka ₹{840} ka order dispatch hone wala hai. "
+            f"Namaste {parsed.recipient_name or 'ji'}! 🙏 Dhaga & Co. se aapka {val_str} ka order dispatch hone wala hai. "
             f"Lekin delivery partner ko aapka address dhoondhne me dikkat na ho, iske liye kripya apna "
             f"{' aur '.join(missing) if missing else 'address'} confirm kar dijiye."
         )
         return WhatsAppIntervention(
             customer_message_hinglish=msg,
             missing_fields_highlighted=missing,
-            quick_reply_suggestions=["Confirm Location on Map", "Update House Number", "Cancel Order"]
+            quick_reply_suggestions=quick_replies
         ), None
 
     if clean_key.startswith("sk-"):
@@ -418,13 +433,18 @@ def step_3_optimize_whatsapp_intervention(
 You are the customer empathy optimizer for Dhaga & Co., a popular everyday clothing brand in India.
 Our customers are 18-34, 78% women, living in Tier-2/3 cities, ordering on mobile via Cash on Delivery.
 
-A customer placed order #{order_id}.
+A customer placed order #{order_id} (Value: {val_str}).
 Address: "{parsed.normalized_formatted_address}"
 Risk Factors: {json.dumps(risk.risk_factors)}
 Missing Key Elements: {json.dumps(missing)}
 
 Write a warm, polite, and reassuring Hinglish WhatsApp message asking the customer to clarify the missing details before we dispatch.
 It should feel friendly and protective (we want their beautiful kurti/dress to reach them on time), NOT accusatory or robotic.
+
+Generate 3 quick-reply button suggestions. The action button MUST correspond directly to what is missing:
+- If pincode circle is mismatched: ["Confirm Location on Map", "Correct Pincode", "Cancel Order"]
+- If landmark is missing: ["Confirm Location on Map", "Add Nearest Landmark", "Cancel Order"]
+- If house/flat number is missing: ["Confirm Location on Map", "Update House Number", "Cancel Order"]
 
 Return ONLY a JSON object:
 {{
@@ -443,11 +463,11 @@ Return ONLY a JSON object:
         data = json.loads(raw_json)
         return WhatsAppIntervention(**data), model_used
     except Exception:
-        msg = f"Namaste {parsed.recipient_name or 'ji'}! Dhaga & Co. order #{order_id} dispatch karne ke liye kripya apna address confirm kijiye."
+        msg = f"Namaste {parsed.recipient_name or 'ji'}! Dhaga & Co. order #{order_id} ({val_str}) dispatch karne ke liye kripya apna address confirm kijiye."
         return WhatsAppIntervention(
             customer_message_hinglish=msg,
             missing_fields_highlighted=missing,
-            quick_reply_suggestions=["Confirm Address", "Edit Address", "Cancel Order"]
+            quick_reply_suggestions=quick_replies
         ), None
 
 
@@ -515,7 +535,8 @@ def process_dhaga_order(
             risk=rto_assessment,
             order_id=order_id,
             api_key=clean_key,
-            provider=provider
+            provider=provider,
+            order_value=order_value
         )
         prevented_loss = LOGISTICS_COST_PER_RTO_INR
 
@@ -528,7 +549,8 @@ def process_dhaga_order(
             risk=rto_assessment,
             order_id=order_id,
             api_key=clean_key,
-            provider=provider
+            provider=provider,
+            order_value=order_value
         )
         prevented_loss = LOGISTICS_COST_PER_RTO_INR
 
@@ -541,7 +563,8 @@ def process_dhaga_order(
             risk=rto_assessment,
             order_id=order_id,
             api_key=clean_key,
-            provider=provider
+            provider=provider,
+            order_value=order_value
         )
     else:
         # LOW Risk -> Auto Approved

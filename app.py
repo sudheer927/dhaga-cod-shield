@@ -391,7 +391,14 @@ with tab_workstation:
     # LEFT PANE: Order Queue Feed & Filter
     # --------------------------------------------------------------------------
     with col_left:
-        st.markdown("##### 📦 Active Incoming Orders Queue")
+        qh_col1, qh_col2 = st.columns([1.8, 1.1])
+        with qh_col1:
+            st.markdown("##### 📦 Active Incoming Orders Queue")
+        with qh_col2:
+            if st.button("🔄 Reset Demo State", key="btn_reset_demo", help="Restore all orders to default presentation baseline", use_container_width=True):
+                seed_default_orders(force_reset=True)
+                st.session_state.selected_order_id = "DHAGA-1004"
+                st.rerun()
         
         # Segmented Filter Bar
         queue_filter = st.radio(
@@ -596,6 +603,25 @@ with tab_workstation:
                 wa = active_order.get("whatsapp")
 
                 if wa and st_code == "HELD_WHATSAPP":
+                    # Determine address component flags
+                    has_door = bool(lbl.get("premise")) if lbl else True
+                    has_landmark = bool(lbl.get("landmark")) if lbl else True
+                    circle_matched = bool(lbl.get("circle_matched", 1)) if lbl else True
+
+                    # Defensive check: ensure phone mockup quick replies match the exact address issue
+                    phone_buttons = wa.get('quick_replies', [])
+                    if not phone_buttons or phone_buttons == ["Confirm Location on Map", "Update House Number", "Cancel Order"]:
+                        phone_buttons = ["Confirm Location on Map"]
+                        if not circle_matched:
+                            phone_buttons.append("Correct Pincode")
+                        elif not has_landmark:
+                            phone_buttons.append("Add Nearest Landmark")
+                        elif not has_door:
+                            phone_buttons.append("Update House Number")
+                        else:
+                            phone_buttons.append("Confirm Address")
+                        phone_buttons.append("Cancel Order")
+
                     # Smartphone Mockup
                     st.markdown(f"""
                     <div class="phone-wrapper">
@@ -610,16 +636,12 @@ with tab_workstation:
                             {wa['message_body']}
                             <div style="font-size:0.68rem; color:#667781; text-align:right; margin-top:4px;">14:32 · Sent ✓✓</div>
                         </div>
-                        {"".join(f'<div class="wa-action-button">🔘 {btn}</div>' for btn in wa.get('quick_replies', []))}
+                        {"".join(f'<div class="wa-action-button">🔘 {btn}</div>' for btn in phone_buttons)}
                     </div>
                     """, unsafe_allow_html=True)
 
                     st.markdown("###### ⚡ Interactive Customer Reply Simulation")
                     st.caption("Simulate customer tapping their WhatsApp reply button:")
-
-                    has_door = bool(lbl.get("premise")) if lbl else True
-                    has_landmark = bool(lbl.get("landmark")) if lbl else True
-                    circle_matched = bool(lbl.get("circle_matched", 1)) if lbl else True
 
                     sim_c1, sim_c2 = st.columns(2)
                     with sim_c1:
