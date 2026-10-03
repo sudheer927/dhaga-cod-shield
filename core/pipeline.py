@@ -40,8 +40,15 @@ def test_api_connection(api_key: str, provider: str = "gemini") -> Tuple[bool, s
         provider = "openai"
 
     if provider == "gemini":
-        # Test Gemini generateContent with 1 token
-        models_to_test = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
+        models_to_test = [
+            "gemini-flash-lite-latest",
+            "gemini-3.5-flash-lite",
+            "gemini-3.6-flash",
+            "gemini-flash-latest",
+            "gemini-3.7-flash",
+            "gemini-3.8-flash",
+        ]
+        last_err = ""
         for m in models_to_test:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={clean_key}"
             headers = {
@@ -53,7 +60,7 @@ def test_api_connection(api_key: str, provider: str = "gemini") -> Tuple[bool, s
                 "generationConfig": {"maxOutputTokens": 2}
             }
             try:
-                r = requests.post(url, headers=headers, json=payload, timeout=8)
+                r = requests.post(url, headers=headers, json=payload, timeout=6)
                 if r.status_code == 200:
                     return True, f"Connected to Google Gemini ({m}) successfully!"
                 elif r.status_code == 400:
@@ -64,11 +71,15 @@ def test_api_connection(api_key: str, provider: str = "gemini") -> Tuple[bool, s
                     return False, f"Gemini Error (400): {msg}"
                 elif r.status_code == 403:
                     return False, "Gemini Error (403): API key forbidden or expired. Verify key at aistudio.google.com"
-                elif r.status_code == 429:
-                    return False, "Gemini Error (429): Quota or rate limit exceeded on this API key."
+                elif r.status_code in (429, 503):
+                    last_err = f"Gemini ({m}) temporarily busy ({r.status_code}). Trying alternate model..."
+                    continue
+                else:
+                    last_err = f"Gemini ({m}) returned HTTP {r.status_code}"
             except Exception as e:
-                return False, f"Network Error: {str(e)}"
-        return False, "Gemini Error: Unable to reach models (404/400). Please check your Google AI Studio key."
+                last_err = f"Network Error: {str(e)}"
+        return False, last_err or "Gemini Error: Unable to reach models. Please check your Google AI Studio key."
+
 
     elif provider == "openai":
         url = "https://api.openai.com/v1/chat/completions"
@@ -100,17 +111,30 @@ def test_api_connection(api_key: str, provider: str = "gemini") -> Tuple[bool, s
 # --- LLM API Client Implementation ---
 
 def call_gemini_api(prompt: str, model: str, temperature: float, api_key: str, json_mode: bool = True) -> str:
-    """Call Google Gemini using REST API with dual header & query param auth."""
+    """Call Google Gemini using REST API with multi-tier model fallback and resilient retry."""
     clean_key = api_key.strip()
     
-    # Priority list of models (gemini-1.5-flash first as it has 100% universal support)
-    candidate_models = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
-    if "pro" in model.lower():
-        candidate_models = ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-2.0-flash"]
+    # Priority cascade: fast models first, followed by resilient fallbacks
+    candidate_models = [
+        model,
+        "gemini-flash-lite-latest",
+        "gemini-3.5-flash-lite",
+        "gemini-3.6-flash",
+        "gemini-flash-latest",
+        "gemini-3.7-flash",
+        "gemini-3.8-flash",
+    ]
+    
+    # Deduplicate while preserving order
+    seen = set()
+    ordered_models = []
+    for m in candidate_models:
+        if m and m not in seen:
+            seen.add(m)
+            ordered_models.append(m)
 
     last_error = ""
-    for m in candidate_models:
-        # Both ?key= and x-goog-api-key header for maximum Google Cloud gateway compatibility
+    for m in ordered_models:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={clean_key}"
         headers = {
             "Content-Type": "application/json",
@@ -127,12 +151,20 @@ def call_gemini_api(prompt: str, model: str, temperature: float, api_key: str, j
             payload["generationConfig"]["responseMimeType"] = "application/json"
 
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=18)
+            resp = requests.post(url, headers=headers, json=payload, timeout=12)
             if resp.status_code == 200:
                 data = resp.json()
                 candidates = data.get("candidates", [])
                 if candidates:
                     return candidates[0]["content"]["parts"][0]["text"]
+            elif resp.status_code in (503, 429):
+                # 503 capacity spike or 429 quota -> seamlessly try next candidate model
+                try:
+                    err_msg = resp.json().get("error", {}).get("message", "Service Busy")
+                except Exception:
+                    err_msg = f"HTTP {resp.status_code}"
+                last_error = f"{m} ({resp.status_code}): {err_msg}"
+                continue
             else:
                 try:
                     err_data = resp.json()
